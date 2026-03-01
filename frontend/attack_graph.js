@@ -84,6 +84,7 @@ const AttackGraph = (() => {
         if (!simulation) return;
         let changed = false;
 
+        // First pass: add all nodes first (to handle edges that reference nodes arriving in different orders)
         if (data.nodes) {
             for (const n of data.nodes) {
                 if (!nodeMap.has(n.id)) {
@@ -100,10 +101,14 @@ const AttackGraph = (() => {
             }
         }
 
+        // Second pass: add edges (nodes should now exist)
         if (data.edges) {
             for (const e of data.edges) {
-                const key = `${e.source}|${e.target}|${e.type}`;
-                if (!edgeSet.has(key) && nodeMap.has(e.source) && nodeMap.has(e.target)) {
+                const sourceId = e.source.id || e.source;
+                const targetId = e.target.id || e.target;
+                const key = `${sourceId}|${targetId}|${e.type}`;
+                
+                if (!edgeSet.has(key) && nodeMap.has(sourceId) && nodeMap.has(targetId)) {
                     edgeSet.add(key);
                     linksData.push({ ...e });
                     changed = true;

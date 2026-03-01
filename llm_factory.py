@@ -39,8 +39,7 @@ def get_llm(deep_thinking: bool = False, temperature: float = 0.1) -> ChatOpenAI
     # Only add the thinking parameter when explicitly enabled
     kwargs["extra_body"] = {
         "thinking": {
-            "type": "enabled" if deep_thinking else "disabled",
-            "budget_tokens": 10000,
+            "type": "enabled" if deep_thinking else "disabled"
         }
     }
 

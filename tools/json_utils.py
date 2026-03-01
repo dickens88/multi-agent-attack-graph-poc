@@ -17,6 +17,14 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def _fix_missing_colon(text: str) -> str:
+    """Fix missing colon between key and value in JSON-like text.
+    
+    Example: "custom_cypher "value"" -> "custom_cypher": "value"
+    """
+    return re.sub(r'(\w+)\s+(")', r'\1": "', text)
+
+
 def _fix_invalid_escapes(text: str) -> str:
     r"""Fix unescaped backslashes that are not valid JSON escape sequences.
 
@@ -52,6 +60,12 @@ def extract_json(text: str) -> dict:
     if result is not None:
         return result
 
+    # Try fixing missing colon before other attempts
+    fixed_colon = _fix_missing_colon(text)
+    result = _try_parse(fixed_colon)
+    if result is not None:
+        return result
+
     # ── Attempt 2: Strip markdown fences ─────────────────────────────────
     fenced = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
     if fenced:
@@ -59,8 +73,10 @@ def extract_json(text: str) -> dict:
         result = _try_parse(inner)
         if result is not None:
             return result
-        # Try with escape fixing
         result = _try_parse(_fix_invalid_escapes(inner))
+        if result is not None:
+            return result
+        result = _try_parse(_fix_missing_colon(inner))
         if result is not None:
             return result
 
@@ -70,14 +86,22 @@ def extract_json(text: str) -> dict:
         result = _try_parse(candidate)
         if result is not None:
             return result
-        # Try with escape fixing
         result = _try_parse(_fix_invalid_escapes(candidate))
+        if result is not None:
+            return result
+        result = _try_parse(_fix_missing_colon(candidate))
         if result is not None:
             return result
 
     # ── Attempt 4: Full escape fix then retry all strategies ─────────────
     fixed = _fix_invalid_escapes(text)
     result = _try_parse(fixed)
+    if result is not None:
+        return result
+
+    # Also try fixing missing colons
+    fixed_colon = _fix_missing_colon(text)
+    result = _try_parse(fixed_colon)
     if result is not None:
         return result
 
