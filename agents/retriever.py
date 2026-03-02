@@ -164,11 +164,19 @@ def _execute_single_action(
     if len(results) > 10:
         results_display += f"\n... 共 {len(results)} 条记录"
 
+    params_display = "NA"
+    if isinstance(params, dict) and params:
+        try:
+            params_display = json.dumps(params, ensure_ascii=False, default=str)
+        except Exception:
+            params_display = str(params)
+
     message = {
         "agent": "Retriever",
         "action": "Query Executed",
         "content": (
             f"**Query**: `{cypher}`\n\n"
+            f"**Params**: `{params_display}`\n\n"
             f"**Results** ({len(results)} records):{results_display}"
         ),
         "iteration": iteration,
@@ -183,6 +191,8 @@ def _execute_single_action(
         from tools.graph_utils import extract_node_ids, extract_graph_entities
 
         new_ids = extract_node_ids(results)
+        logger.info("Retriever extracted IDs: %s", new_ids)
+        
         if new_ids:
             if shared_node_ids is not None:
                 shared_node_ids.update(new_ids)
@@ -197,7 +207,9 @@ def _execute_single_action(
                 "LIMIT 200",
                 {"ids": query_ids},
             )
+            logger.info("Subgraph query returned: %d records", len(subgraph_results))
             graph_data = extract_graph_entities(subgraph_results)
+            logger.info("Graph data extracted: %d nodes, %d edges", len(graph_data["nodes"]), len(graph_data["edges"]))
             if graph_data["nodes"] or graph_data["edges"]:
                 if progress_cb:
                     progress_cb("graph_update", graph_data)

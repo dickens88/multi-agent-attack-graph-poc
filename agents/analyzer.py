@@ -11,7 +11,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
-from tools.json_utils import extract_json
+from tools.json_utils import extract_analyzer_json
 
 logger = logging.getLogger(__name__)
 
@@ -36,21 +36,29 @@ Your job is to analyze the LATEST batch of query results in the context of the o
 3. Extract key findings as structured evidence items.
 4. Assess how these findings contribute to answering the investigation goal.
 
-## Output Format (strict JSON)
+## Output Format (strict JSON - MANDATORY)
+CRITICAL: Your response must be VALID JSON that can be parsed by json.loads().
+- Start your response with opening brace and end with closing brace
+- Do NOT wrap in markdown code fences (no triple backticks)
+- Do NOT include any text before or after the JSON
+- All string values must be properly quoted
+- Do NOT use single quotes
+- Ensure all brackets and braces are matched
+
+Required schema:
 ```json
 {{
-  "analysis": "<your analysis narrative, cross-referencing findings from all queries>",
+  "analysis": "<your analysis narrative>",
   "new_evidence": [
     {{
       "finding": "<concise finding>",
-      "confidence": <0.0-1.0>,
-      "entities_involved": ["<entity_id>", ...]
+      "confidence": 0.0-1.0,
+      "entities_involved": ["entity_id1", ...]
     }}
   ],
-  "gaps": "<what information is still missing to answer the investigation goal>"
+  "gaps": "<what information is still missing>"
 }}
 ```
-Always respond with ONLY the JSON object, no markdown fences.
 """
 
 
@@ -109,8 +117,8 @@ def analyzer_node(state: InvestigationState) -> dict:
     raw = response.content.strip()
 
     try:
-        result = extract_json(raw)
-    except ValueError:
+        result = extract_analyzer_json(raw)
+    except ValueError as e:
         logger.warning("Analyzer produced invalid JSON. Raw: %s", raw)
         result = {
             "analysis": raw,

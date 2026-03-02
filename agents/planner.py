@@ -13,7 +13,7 @@ from state.investigation_state import InvestigationState
 from llm_factory import get_llm
 from config import settings
 from tools.cypher_templates import get_template_descriptions
-from tools.json_utils import extract_json
+from tools.json_utils import extract_planner_json
 
 logger = logging.getLogger(__name__)
 
@@ -58,20 +58,29 @@ Examples of NON-parallelizable queries (must be sequential):
 ## Graph Schema
 {graph_schema}
 
-## Output Format (strict JSON)
+## Output Format (strict JSON - MANDATORY)
 
+CRITICAL: Your response must be VALID JSON that can be parsed by json.loads().
+- Start your response with opening brace and end with closing brace
+- Do NOT wrap in markdown code fences (no triple backticks)
+- Do NOT include any text before or after the JSON
+- All string values must be properly quoted
+- Do NOT use single quotes
+- Ensure all brackets and braces are matched
+
+Required schema:
 ```json
 {{
   "thought": "<your reasoning about what we know and what we need to find out next>",
   "actions": [
     {{
-      "template_name": "<name of a template from above, or 'custom' for free-form Cypher>",
-      "params": {{"<param_name>": "<value>", ...}},
-      "custom_cypher": "<only if template_name is 'custom': the read-only Cypher query>",
-      "description": "<one line describing what this query is looking for>"
+      "template_name": "<template name or 'custom'>",
+      "params": {{"param_name": "value", ...}},
+      "custom_cypher": "<only if template_name is custom>",
+      "description": "<one line description>"
     }}
   ],
-  "confidence": <0.0 to 1.0 — how confident you are that existing evidence is sufficient to answer the user's question>
+  "confidence": 0.0-1.0
 }}
 ```
 
@@ -134,7 +143,7 @@ def planner_node(state: InvestigationState) -> dict:
     logger.info("Planner raw LLM response (first 500 chars): %s", raw[:500])
 
     try:
-        result = extract_json(raw)
+        result = extract_planner_json(raw)
     except ValueError as e:
         logger.error(
             "Planner JSON parse FAILED. Error: %s\n"

@@ -25,8 +25,9 @@ const AttackGraph = (() => {
         if (!container) return;
 
         svg = d3.select(selector);
-        width = container.clientWidth;
-        height = container.clientHeight;
+        const rect = container.getBoundingClientRect();
+        width = Math.max(640, Math.floor(rect.width || container.clientWidth || 0));
+        height = Math.max(420, Math.floor(rect.height || container.clientHeight || 0));
 
         svg.attr('viewBox', [0, 0, width, height]);
 
@@ -84,6 +85,9 @@ const AttackGraph = (() => {
         if (!simulation) return;
         let changed = false;
 
+        console.log('[Graph] Received data:', data.nodes?.length, 'nodes,', data.edges?.length, 'edges');
+        console.log('[Graph] Current nodeMap size:', nodeMap.size);
+
         // First pass: add all nodes first (to handle edges that reference nodes arriving in different orders)
         if (data.nodes) {
             for (const n of data.nodes) {
@@ -97,6 +101,7 @@ const AttackGraph = (() => {
                     nodesData.push(node);
                     nodeMap.set(n.id, node);
                     changed = true;
+                    console.log('[Graph] Added node:', n.id, n.type);
                 }
             }
         }
@@ -108,18 +113,30 @@ const AttackGraph = (() => {
                 const targetId = e.target.id || e.target;
                 const key = `${sourceId}|${targetId}|${e.type}`;
                 
-                if (!edgeSet.has(key) && nodeMap.has(sourceId) && nodeMap.has(targetId)) {
-                    edgeSet.add(key);
-                    linksData.push({ ...e });
-                    changed = true;
+                const sourceExists = nodeMap.has(sourceId);
+                const targetExists = nodeMap.has(targetId);
+                
+                if (!edgeSet.has(key)) {
+                    if (sourceExists && targetExists) {
+                        edgeSet.add(key);
+                        linksData.push({ ...e });
+                        changed = true;
+                        console.log('[Graph] Added edge:', sourceId, '->', targetId);
+                    } else {
+                        console.log('[Graph] Skipped edge - source exists:', sourceExists, 'target exists:', targetExists, 'source:', sourceId, 'target:', targetId);
+                    }
                 }
             }
         }
 
+        console.log('[Graph] After processing - nodesData:', nodesData.length, 'linksData:', linksData.length);
+
         if (changed) {
+            console.log('[Graph] Calling render(), simulation exists:', !!simulation);
             render();
             simulation.alpha(0.6).restart();
             updateStats();
+            console.log('[Graph] Render complete, nodes in DOM:', nodeGroup?.selectAll('g.node').size());
         }
     }
 
