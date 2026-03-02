@@ -11,7 +11,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
-from tools.json_utils import extract_analyzer_json
+from tools.json_utils import extract_json, DEFAULT_REQUIRED_FIELDS
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ def analyzer_node(state: InvestigationState) -> dict:
     raw = response.content.strip()
 
     try:
-        result = extract_analyzer_json(raw)
+        result = extract_json(raw, required_fields=DEFAULT_REQUIRED_FIELDS["analyzer"])
     except ValueError as e:
         logger.warning("Analyzer produced invalid JSON. Raw: %s", raw)
         result = {

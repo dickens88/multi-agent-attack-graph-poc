@@ -8,7 +8,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
-from tools.json_utils import extract_coordinator_json
+from tools.json_utils import extract_json, DEFAULT_REQUIRED_FIELDS
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def coordinator_node(state: InvestigationState) -> dict:
         content = str(content)
 
     try:
-        result = extract_coordinator_json(content)
+        result = extract_json(content, required_fields=DEFAULT_REQUIRED_FIELDS["coordinator"])
     except ValueError as e:
         logger.warning("Coordinator produced invalid JSON. Error: %s", e)
         result = {

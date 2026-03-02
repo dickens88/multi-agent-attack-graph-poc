@@ -7,15 +7,18 @@ from __future__ import annotations
 import json
 import logging
 
+from tenacity import retry, stop_after_attempt
+
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
 from config import settings
 from tools.cypher_templates import get_template_descriptions
-from tools.json_utils import extract_planner_json
+from tools.json_utils import extract_json, DEFAULT_REQUIRED_FIELDS
 
 logger = logging.getLogger(__name__)
+
 
 SYSTEM_PROMPT = """\
 You are the **Planner** of a security incident investigation system.
@@ -61,12 +64,7 @@ Examples of NON-parallelizable queries (must be sequential):
 ## Output Format (strict JSON - MANDATORY)
 
 CRITICAL: Your response must be VALID JSON that can be parsed by json.loads().
-- Start your response with opening brace and end with closing brace
 - Do NOT wrap in markdown code fences (no triple backticks)
-- Do NOT include any text before or after the JSON
-- All string values must be properly quoted
-- Do NOT use single quotes
-- Ensure all brackets and braces are matched
 
 Required schema:
 ```json
@@ -87,7 +85,7 @@ Required schema:
 Rules:
 - The "actions" array must contain 1 to 3 query instructions.
 - Use multiple actions when the queries are independent and can run in parallel.
-- If confidence >= 0.85 or there is nothing more useful to query, set actions to a single entry with template_name "DONE".
+- If confidence >= 0.90 or there is nothing more useful to query, set actions to a single entry with template_name "DONE".
 - Always respond with ONLY the JSON object, no markdown fences.
 """
 
@@ -111,6 +109,7 @@ def _summarize_queries(queries: list[dict]) -> str:
     return "\n".join(lines)
 
 
+@retry(stop=stop_after_attempt(2), reraise=True)
 def planner_node(state: InvestigationState) -> dict:
     """LangGraph node: Planner."""
     llm = get_llm(
@@ -143,7 +142,7 @@ def planner_node(state: InvestigationState) -> dict:
     logger.info("Planner raw LLM response (first 500 chars): %s", raw[:500])
 
     try:
-        result = extract_planner_json(raw)
+        result = extract_json(raw, required_fields=DEFAULT_REQUIRED_FIELDS["planner"])
     except ValueError as e:
         logger.error(
             "Planner JSON parse FAILED. Error: %s\n"
@@ -151,11 +150,7 @@ def planner_node(state: InvestigationState) -> dict:
             "=== FULL RAW RESPONSE END ===",
             e, raw,
         )
-        result = {
-            "thought": "Unable to parse plan; concluding investigation.",
-            "actions": [{"template_name": "DONE", "params": {}, "description": "Done"}],
-            "confidence": 1.0,
-        }
+        raise
 
     thought = result.get("thought", "")
     confidence = result.get("confidence", 0.0)
