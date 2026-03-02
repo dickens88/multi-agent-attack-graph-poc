@@ -1,18 +1,16 @@
 """CLI entry point for the Security Investigation Multi-Agent System."""
 
 import json
-import logging
 import sys
+
+from logging_config import get_logger, setup_logging
 
 from graph.investigation_graph import investigation_graph
 from state.investigation_state import InvestigationState
 from config import settings
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
+setup_logging()
+logger = get_logger(__name__)
 
 
 def run_investigation(question: str) -> str:

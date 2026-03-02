@@ -4,16 +4,14 @@ Supports parallel execution with real-time streaming of individual query results
 via the event bus.
 """
 
-from __future__ import annotations
-
 import json
-import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from logging_config import get_logger
 import event_bus
 from config import settings
 from llm_factory import get_llm
@@ -22,7 +20,7 @@ from tools.cypher_templates import TEMPLATES
 from tools.json_utils import extract_json, parse_json_list
 from tools.neo4j_tools import neo4j_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Prompt used only when the Planner requests a "custom" Cypher query
 CYPHER_GEN_PROMPT = """\

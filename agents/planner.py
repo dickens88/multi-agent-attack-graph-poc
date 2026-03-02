@@ -3,9 +3,9 @@
 Supports generating 1-3 parallel query actions per iteration for efficiency.
 """
 
-from __future__ import annotations
 import json
-import logging
+
+from logging_config import get_logger
 
 from tenacity import retry, stop_after_attempt
 
@@ -17,7 +17,7 @@ from config import settings
 from tools.cypher_templates import get_template_descriptions
 from tools.json_utils import extract_json, DEFAULT_REQUIRED_FIELDS
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 SYSTEM_PROMPT = """\

@@ -1,12 +1,11 @@
 """Lightweight JSON parsing helpers for LLM responses."""
 
-from __future__ import annotations
-
 import json
-import logging
 import re
 
-logger = logging.getLogger(__name__)
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 DEFAULT_REQUIRED_FIELDS: dict[str, set[str]] = {
     "analyzer": {"analysis", "new_evidence", "gaps"},

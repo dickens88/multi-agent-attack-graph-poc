@@ -3,18 +3,18 @@
 Handles batch results from parallel query execution.
 """
 
-from __future__ import annotations
 import json
-import logging
 
 from langchain_core.messages import SystemMessage, HumanMessage
+
+from logging_config import get_logger
 
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
 from tools.json_utils import extract_json, DEFAULT_REQUIRED_FIELDS
 from config import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """\
 You are the **Analyzer** of a security incident investigation system.

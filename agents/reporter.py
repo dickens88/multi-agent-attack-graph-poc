@@ -1,8 +1,8 @@
 """Reporter Agent — synthesizes all evidence into a final investigation report."""
 
-from __future__ import annotations
 import json
-import logging
+
+from logging_config import get_logger
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -10,7 +10,7 @@ from state.investigation_state import InvestigationState
 from llm_factory import get_llm
 from config import settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """\
 You are the **Reporter** of a security incident investigation system.

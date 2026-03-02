@@ -1,9 +1,7 @@
 """FastAPI server — exposes investigation API with SSE streaming."""
 
-from __future__ import annotations
 import asyncio
 import json
-import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -16,13 +14,11 @@ from sse_starlette.sse import EventSourceResponse
 from graph.investigation_graph import investigation_graph
 from state.investigation_state import InvestigationState
 from config import settings
+from logging_config import get_logger, setup_logging
 import event_bus
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
+setup_logging()
+logger = get_logger(__name__)
 
 app = FastAPI(title="Security Investigation Multi-Agent System")
 
@@ -60,7 +56,7 @@ def _run_graph_sync(initial_state: dict, queue: asyncio.Queue, loop: asyncio.Abs
             initial_state,
             config={"recursion_limit": 50},
         ):
-            for node_name, partial_state in state_snapshot.items():
+            for _, partial_state in state_snapshot.items():
                 messages = partial_state.get("agent_messages", [])
                 for msg in messages:
                     # Create a simple identity key to avoid duplicate sends
