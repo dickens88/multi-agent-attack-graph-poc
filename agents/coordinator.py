@@ -8,6 +8,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
+from tools.json_utils import extract_coordinator_json
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,7 @@ def coordinator_node(state: InvestigationState) -> dict:
     """LangGraph node: Coordinator."""
     llm = get_llm(
         deep_thinking=state.get("deep_thinking", False),
-        temperature=0,
+        temperature=settings.TEMPERATURE,
     )
 
     messages = [
@@ -54,17 +56,15 @@ def coordinator_node(state: InvestigationState) -> dict:
     ]
 
     response = llm.invoke(messages)
-    raw = response.content.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
+
+    content = response.content
+    if isinstance(content, list):
+        content = str(content)
 
     try:
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("Coordinator produced invalid JSON. Raw: %s", raw)
+        result = extract_coordinator_json(content)
+    except ValueError as e:
+        logger.warning("Coordinator produced invalid JSON. Error: %s", e)
         result = {
             "investigation_type": "general_investigation",
             "investigation_goal": state["user_question"],

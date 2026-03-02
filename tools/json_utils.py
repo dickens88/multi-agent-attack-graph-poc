@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_REQUIRED_FIELDS: dict[str, set[str]] = {
     "analyzer": {"analysis", "new_evidence", "gaps"},
     "planner": {"thought", "actions", "confidence"},
+    "coordinator": {"investigation_type", "investigation_goal", "key_entities"},
 }
 
 
@@ -277,4 +278,12 @@ def extract_planner_json(text: str) -> dict:
     return extract_json(
         text,
         required_fields=DEFAULT_REQUIRED_FIELDS["planner"],
+    )
+
+
+def extract_coordinator_json(text: str) -> dict:
+    """Extract JSON specifically for Coordinator agent."""
+    return extract_json(
+        text,
+        required_fields=DEFAULT_REQUIRED_FIELDS["coordinator"],
     )

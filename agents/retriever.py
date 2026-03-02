@@ -15,6 +15,7 @@ from state.investigation_state import InvestigationState
 from llm_factory import get_llm
 from tools.neo4j_tools import neo4j_client
 from tools.cypher_templates import TEMPLATES
+from config import settings
 import event_bus
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ Respond with ONLY a JSON object:
 """
 
 # Thread pool for parallel query execution
-_query_pool = ThreadPoolExecutor(max_workers=3)
+_query_pool = ThreadPoolExecutor(max_workers=settings.QUERY_PARALLEL_WORKERS)
 
 
 def _resolve_template(action: dict) -> tuple[str, dict]:
@@ -59,7 +60,7 @@ def _resolve_template(action: dict) -> tuple[str, dict]:
 
 def _generate_custom_cypher(action: dict, schema: str, deep_thinking: bool = False) -> tuple[str, dict]:
     """Use the LLM to generate a custom Cypher query."""
-    llm = get_llm(deep_thinking=deep_thinking, temperature=0)
+    llm = get_llm(deep_thinking=deep_thinking, temperature=settings.TEMPERATURE)
 
     description = action.get("description", "")
     custom_cypher = action.get("custom_cypher", "")

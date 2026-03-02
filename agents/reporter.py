@@ -8,6 +8,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,25 +47,35 @@ Use Chinese (简体中文) for the report content.
 """
 
 
+def _truncate_to_token_limit(text: str, max_tokens: int) -> str:
+    """粗略估算并截断文本到令牌限制"""
+    max_chars = max_tokens * 4
+    if len(text) > max_chars:
+        return text[:max_chars] + "\n... (截断)"
+    return text
+
+
 def reporter_node(state: InvestigationState) -> dict:
     """LangGraph node: Reporter."""
     llm = get_llm(
         deep_thinking=state.get("deep_thinking", False),
-        temperature=0.2,
+        temperature=settings.TEMPERATURE,
     )
 
     evidence = state.get("evidence_collected", [])
     evidence_str = "\n".join(
-        f"{i}. [{e.get('confidence', '?'):.0%}] {e['finding']} "
+        f"{i}. [{e.get('confidence', 0):.0%}] {e['finding']} "
         f"(entities: {', '.join(e.get('entities_involved', []))})"
         for i, e in enumerate(evidence, 1)
     ) or "(no evidence collected)"
+    evidence_str = _truncate_to_token_limit(evidence_str, max_tokens=settings.MAX_TOKENS)
 
     queries = state.get("queries_executed", [])
     queries_str = "\n".join(
         f"{i}. {q['description']} | Cypher: `{q['cypher']}` | {len(q.get('results', []))} results"
         for i, q in enumerate(queries, 1)
     ) or "(no queries)"
+    queries_str = _truncate_to_token_limit(queries_str, max_tokens=settings.MAX_TOKENS)
 
     prompt = SYSTEM_PROMPT.format(
         user_question=state.get("user_question", ""),

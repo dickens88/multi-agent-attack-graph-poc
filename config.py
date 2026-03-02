@@ -20,5 +20,14 @@ class Settings:
     # Investigation
     MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "10"))
 
+    # LLM
+    TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0"))
+
+    # Query
+    QUERY_PARALLEL_WORKERS: int = int(os.getenv("QUERY_PARALLEL_WORKERS", "3"))
+
+    # Model
+    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "128000"))
+
 
 settings = Settings()

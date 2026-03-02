@@ -115,7 +115,7 @@ def planner_node(state: InvestigationState) -> dict:
     """LangGraph node: Planner."""
     llm = get_llm(
         deep_thinking=state.get("deep_thinking", False),
-        temperature=0.1,
+        temperature=settings.TEMPERATURE,
     )
 
     iteration = state.get("iteration_count", 0) + 1

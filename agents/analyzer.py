@@ -12,6 +12,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from state.investigation_state import InvestigationState
 from llm_factory import get_llm
 from tools.json_utils import extract_analyzer_json
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ def analyzer_node(state: InvestigationState) -> dict:
     """LangGraph node: Analyzer."""
     llm = get_llm(
         deep_thinking=state.get("deep_thinking", False),
-        temperature=0,
+        temperature=settings.TEMPERATURE,
     )
 
     all_queries = state.get("queries_executed", [])
@@ -88,9 +89,10 @@ def analyzer_node(state: InvestigationState) -> dict:
     # Build queries section for prompt
     queries_parts = []
     for i, q in enumerate(new_queries, 1):
-        results_str = json.dumps(q.get("results", [])[:15], ensure_ascii=False, default=str)
-        if len(results_str) > 2500:
-            results_str = results_str[:2500] + "... (truncated)"
+        results = q.get("results", [])[:15]
+        results_str = json.dumps(results, ensure_ascii=False, default=str)
+        if len(results) > 15:
+            results_str += "\n... (truncated)"
         queries_parts.append(
             f"### Query {i}: {q.get('description', 'N/A')}\n"
             f"**Results**: {results_str}"
