@@ -7,164 +7,155 @@
     <title>安全事件调查系统 — Multi-Agent Investigation</title>
     <meta name="description" content="基于多智能体协作的安全事件调查系统，实时展示调查过程">
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@300;400;500;700&display=swap"
-        rel="stylesheet" media="print" onload="this.media='all'">
-    <link rel="stylesheet" href="/static/style.css?v=20260301-1">
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=20260301-4">
     <script src="/static/d3.v7.min.js"></script>
 </head>
 
 <body>
-    <div class="scanline-overlay"></div>
-    <div class="grid-bg"></div>
-
-    <header class="header">
+    <header class="app-header">
         <div class="header-left">
-            <div class="logo-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
-            </div>
+            <button class="logo-icon" type="button">
+                <span class="material-symbols-outlined">hub</span>
+            </button>
             <div>
-                <h1>SECURITY INVESTIGATION</h1>
-                <p class="subtitle">Multi-Agent Collaborative Analysis System</p>
+                <h1>SIEM <span>AI Graph</span></h1>
+                <p class="subtitle">Advanced security investigation</p>
             </div>
         </div>
+
+        <div class="header-search">
+            <span class="material-symbols-outlined search-icon">search</span>
+            <textarea id="questionInput" placeholder="输入你的安全调查问题...&#10;例如: 192.168.1.100 这台主机是否被入侵？请分析攻击路径。"
+                rows="1"></textarea>
+            <div class="deep-thinking">
+                <span class="deep-label">Deep Reasoning</span>
+                <label class="toggle-switch" id="deepThinkingToggle" title="启用深度思考模式">
+                    <input type="checkbox" id="deepThinkingCheckbox">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <button id="submitBtn" onclick="startInvestigation()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+                </svg>
+                <span>开始调查</span>
+            </button>
+        </div>
+
         <div class="header-right">
             <div class="status-indicator" id="statusIndicator">
                 <span class="status-dot"></span>
                 <span class="status-text">STANDBY</span>
             </div>
+            <button class="header-action" type="button" id="historyBtn">Investigation History</button>
+            <button class="icon-button" type="button">
+                <span class="material-symbols-outlined">notifications</span>
+            </button>
+            <button class="icon-button" type="button">
+                <span class="material-symbols-outlined">settings</span>
+            </button>
+            <div class="avatar"></div>
         </div>
     </header>
 
-    <!-- Input Panel (full width) -->
-    <section class="input-panel-outer">
-        <div class="input-panel">
-            <div class="input-wrapper">
-                <textarea id="questionInput" placeholder="输入你的安全调查问题...&#10;例如: 192.168.1.100 这台主机是否被入侵？请分析攻击路径。"
-                    rows="3"></textarea>
-                <div class="input-controls">
-                    <label class="toggle-switch" id="deepThinkingToggle" title="启用深度思考模式">
-                        <input type="checkbox" id="deepThinkingCheckbox">
-                        <span class="toggle-slider"></span>
-                        <span class="toggle-label">🧠 深度思考</span>
-                    </label>
-                    <button id="submitBtn" onclick="startInvestigation()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
-                        </svg>
-                        <span>开始调查</span>
-                    </button>
+    <main class="app-main">
+        <div class="layout-grid">
+            <aside class="panel-left">
+                <div class="panel-heading">
+                    <div>
+                        <h3>Operation Stream</h3>
+                        <div class="stream-status">
+                            <span></span>
+                            <span>3 PROCESSES ACTIVE</span>
+                        </div>
+                    </div>
+                    <div class="build-info">v4.1.0-build</div>
                 </div>
-            </div>
-        </div>
-    </section>
+                <section class="timeline-container" id="timelineContainer" style="display:none;">
+                    <h2 class="section-title">Agent Collaboration Timeline</h2>
+                    <div class="timeline" id="timeline"></div>
+                    <div class="waiting-indicator" id="waitingIndicator" style="display:none;">
+                        <div class="waiting-content">
+                            <div class="waiting-spinner"></div>
+                            <span class="waiting-text" id="waitingText">正在初始化调查...</span>
+                            <span class="waiting-timer" id="waitingTimer">0s</span>
+                        </div>
+                    </div>
+                </section>
 
-    <!-- Two-Column Layout -->
-    <div class="layout-split">
-        <!-- LEFT: Timeline Panel -->
-        <div class="panel-left">
-            <!-- Agent Pipeline Visualization -->
-            <section class="pipeline" id="pipeline" style="display:none;">
-                <div class="pipeline-track">
-                    <div class="pipeline-node" data-agent="Coordinator" id="pipeCoordinator">
-                        <div class="pipeline-icon">🎯</div>
-                        <div class="pipeline-label">Coordinator</div>
+                <section class="report-container" id="reportContainer" style="display:none;">
+                    <h2 class="section-title">Investigation Report</h2>
+                    <div class="report-content" id="reportContent"></div>
+                </section>
+            </aside>
+
+            <section class="panel-right">
+                <section class="pipeline" id="pipeline" style="display:none;">
+                    <div class="pipeline-track">
+                        <div class="pipeline-node" data-agent="Coordinator" id="pipeCoordinator">
+                            <div class="pipeline-icon">🎯</div>
+                            <div class="pipeline-label">Coordinator</div>
+                        </div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node" data-agent="Planner" id="pipePlanner">
+                            <div class="pipeline-icon">🧠</div>
+                            <div class="pipeline-label">Planner</div>
+                        </div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node" data-agent="Retriever" id="pipeRetriever">
+                            <div class="pipeline-icon">🔍</div>
+                            <div class="pipeline-label">Retriever</div>
+                        </div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node" data-agent="Analyzer" id="pipeAnalyzer">
+                            <div class="pipeline-icon">📊</div>
+                            <div class="pipeline-label">Analyzer</div>
+                        </div>
+                        <div class="pipeline-connector"></div>
+                        <div class="pipeline-node" data-agent="Reporter" id="pipeReporter">
+                            <div class="pipeline-icon">📝</div>
+                            <div class="pipeline-label">Reporter</div>
+                        </div>
                     </div>
-                    <div class="pipeline-connector"></div>
-                    <div class="pipeline-node" data-agent="Planner" id="pipePlanner">
-                        <div class="pipeline-icon">🧠</div>
-                        <div class="pipeline-label">Planner</div>
+                    <div class="iteration-badge" id="iterationBadge">Iteration: 0</div>
+                </section>
+                <div class="graph-panel" id="graphPanel">
+                    <div class="graph-header">
+                        <div class="graph-title">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16"
+                                height="16">
+                                <circle cx="6" cy="6" r="3" />
+                                <circle cx="18" cy="18" r="3" />
+                                <circle cx="18" cy="6" r="3" />
+                                <circle cx="6" cy="18" r="3" />
+                                <line x1="8.5" y1="7.5" x2="15.5" y2="16.5" />
+                                <line x1="15.5" y1="7.5" x2="8.5" y2="16.5" />
+                            </svg>
+                            ATTACK GRAPH
+                        </div>
+                        <div class="graph-stats" id="graphStats">0 nodes · 0 edges</div>
                     </div>
-                    <div class="pipeline-connector"></div>
-                    <div class="pipeline-node" data-agent="Retriever" id="pipeRetriever">
-                        <div class="pipeline-icon">🔍</div>
-                        <div class="pipeline-label">Retriever</div>
-                    </div>
-                    <div class="pipeline-connector"></div>
-                    <div class="pipeline-node" data-agent="Analyzer" id="pipeAnalyzer">
-                        <div class="pipeline-icon">📊</div>
-                        <div class="pipeline-label">Analyzer</div>
-                    </div>
-                    <div class="pipeline-connector"></div>
-                    <div class="pipeline-node" data-agent="Reporter" id="pipeReporter">
-                        <div class="pipeline-icon">📝</div>
-                        <div class="pipeline-label">Reporter</div>
+                    <svg class="graph-svg" id="graphSvg"></svg>
+                    <div class="graph-legend" id="graphLegend">
+                        <div class="legend-item"><span class="legend-dot" style="background:#00e5ff"></span>Host</div>
+                        <div class="legend-item"><span class="legend-dot" style="background:#b388ff"></span>User</div>
+                        <div class="legend-item"><span class="legend-dot" style="background:#ff1744"></span>IOC</div>
+                        <div class="legend-item"><span class="legend-dot" style="background:#ffab00"></span>Alert</div>
+                        <div class="legend-item"><span class="legend-dot" style="background:#39ff14"></span>Process</div>
+                        <div class="legend-item"><span class="legend-dot" style="background:#448aff"></span>Network</div>
+                        <div class="legend-item"><span class="legend-dot" style="background:#78909c"></span>File</div>
+                        <div class="legend-item"><span class="legend-dot" style="background:#ea80fc"></span>MITRE</div>
                     </div>
                 </div>
-                <div class="iteration-badge" id="iterationBadge">Iteration: 0</div>
-            </section>
-
-            <!-- Waiting Indicator (placed BEFORE timeline to keep it above, but we move it inside) -->
-
-            <!-- Agent Messages Timeline -->
-            <section class="timeline-container" id="timelineContainer" style="display:none;">
-                <h2 class="section-title">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20"
-                        height="20">
-                        <circle cx="12" cy="12" r="10" />
-                        <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                    Agent Collaboration Timeline
-                </h2>
-                <div class="timeline" id="timeline"></div>
-                <!-- Waiting Indicator — always at bottom of timeline -->
-                <div class="waiting-indicator" id="waitingIndicator" style="display:none;">
-                    <div class="waiting-content">
-                        <div class="waiting-spinner"></div>
-                        <span class="waiting-text" id="waitingText">正在初始化调查...</span>
-                        <span class="waiting-timer" id="waitingTimer">0s</span>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Final Report -->
-            <section class="report-container" id="reportContainer" style="display:none;">
-                <h2 class="section-title">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20"
-                        height="20">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                    Investigation Report
-                </h2>
-                <div class="report-content" id="reportContent"></div>
             </section>
         </div>
-
-        <!-- RIGHT: Attack Graph Panel -->
-        <div class="panel-right">
-            <div class="graph-panel" id="graphPanel">
-                <div class="graph-header">
-                    <div class="graph-title">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16"
-                            height="16">
-                            <circle cx="6" cy="6" r="3" />
-                            <circle cx="18" cy="18" r="3" />
-                            <circle cx="18" cy="6" r="3" />
-                            <circle cx="6" cy="18" r="3" />
-                            <line x1="8.5" y1="7.5" x2="15.5" y2="16.5" />
-                            <line x1="15.5" y1="7.5" x2="8.5" y2="16.5" />
-                        </svg>
-                        ATTACK GRAPH
-                    </div>
-                    <div class="graph-stats" id="graphStats">0 nodes · 0 edges</div>
-                </div>
-                <svg class="graph-svg" id="graphSvg"></svg>
-                <div class="graph-legend" id="graphLegend">
-                    <div class="legend-item"><span class="legend-dot" style="background:#00e5ff"></span>Host</div>
-                    <div class="legend-item"><span class="legend-dot" style="background:#b388ff"></span>User</div>
-                    <div class="legend-item"><span class="legend-dot" style="background:#ff1744"></span>IOC</div>
-                    <div class="legend-item"><span class="legend-dot" style="background:#ffab00"></span>Alert</div>
-                    <div class="legend-item"><span class="legend-dot" style="background:#39ff14"></span>Process</div>
-                    <div class="legend-item"><span class="legend-dot" style="background:#448aff"></span>Network</div>
-                    <div class="legend-item"><span class="legend-dot" style="background:#78909c"></span>File</div>
-                    <div class="legend-item"><span class="legend-dot" style="background:#ea80fc"></span>MITRE</div>
-                </div>
-            </div>
-        </div>
-    </div>
+    </main>
 
     <script src="/static/attack_graph.js"></script>
     <script src="/static/app.js"></script>

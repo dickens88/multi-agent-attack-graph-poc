@@ -5,6 +5,7 @@ import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -30,8 +31,17 @@ if STATIC_DIR.exists():
 # Thread pool for running synchronous LangGraph
 _executor = ThreadPoolExecutor(max_workers=4)
 
+# Track active investigations to support server-side cancellation
+_active_investigations = {}
+_active_lock = threading.Lock()
 
-def _run_graph_sync(initial_state: dict, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+
+def _run_graph_sync(
+    initial_state: dict,
+    queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+    stop_event: threading.Event,
+):
     """Run the LangGraph synchronously in a thread, pushing events to a queue.
 
     Also registers an event_bus callback so agents can push progress
@@ -56,6 +66,10 @@ def _run_graph_sync(initial_state: dict, queue: asyncio.Queue, loop: asyncio.Abs
             initial_state,
             config={"recursion_limit": 50},
         ):
+            if stop_event.is_set():
+                logger.info("Investigation canceled by client request.")
+                break
+
             for _, partial_state in state_snapshot.items():
                 messages = partial_state.get("agent_messages", [])
                 for msg in messages:
@@ -121,8 +135,12 @@ async def investigate(request: Request):
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
 
+    stop_event = threading.Event()
+    with _active_lock:
+        _active_investigations[investigation_id] = stop_event
+
     # Kick off the graph in a background thread
-    loop.run_in_executor(_executor, _run_graph_sync, initial_state, queue, loop)
+    loop.run_in_executor(_executor, _run_graph_sync, initial_state, queue, loop, stop_event)
 
     async def event_generator():
         # Send start event
@@ -135,29 +153,46 @@ async def investigate(request: Request):
             }, ensure_ascii=False),
         }
 
-        while True:
-            # Check if client disconnected
-            if await request.is_disconnected():
-                logger.info("Client disconnected, stopping SSE stream.")
-                break
+        try:
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    logger.info("Client disconnected, stopping SSE stream.")
+                    stop_event.set()
+                    break
 
-            try:
-                event_type, payload = await asyncio.wait_for(queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                # Send a heartbeat comment to keep connection alive
-                yield {"comment": "heartbeat"}
-                continue
+                try:
+                    event_type, payload = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # Send a heartbeat comment to keep connection alive
+                    yield {"comment": "heartbeat"}
+                    continue
 
-            if event_type == "done":
-                yield {"event": "done", "data": "{}"}
-                break
+                if event_type == "done":
+                    yield {"event": "done", "data": "{}"}
+                    break
 
-            yield {
-                "event": event_type,
-                "data": json.dumps(payload, ensure_ascii=False, default=str),
-            }
+                yield {
+                    "event": event_type,
+                    "data": json.dumps(payload, ensure_ascii=False, default=str),
+                }
+        finally:
+            with _active_lock:
+                _active_investigations.pop(investigation_id, None)
 
     return EventSourceResponse(event_generator())
+
+
+@app.post("/api/investigate/{investigation_id}/cancel")
+async def cancel_investigation(investigation_id: str):
+    with _active_lock:
+        stop_event = _active_investigations.get(investigation_id)
+
+    if not stop_event:
+        return JSONResponse({"error": "investigation not found"}, status_code=404)
+
+    stop_event.set()
+    return JSONResponse({"status": "canceled"})
 
 
 # ── Serve Frontend ──────────────────────────────────────────────────────────

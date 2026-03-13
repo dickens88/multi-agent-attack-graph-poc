@@ -16,6 +16,7 @@ const waitingIndicator = document.getElementById('waitingIndicator');
 const waitingText = document.getElementById('waitingText');
 const waitingTimer = document.getElementById('waitingTimer');
 const deepThinkingCb = document.getElementById('deepThinkingCheckbox');
+const historyBtn = document.getElementById('historyBtn');
 
 // ── State ─────────────────────────────────────────────────────
 let eventSource = null;
@@ -24,6 +25,7 @@ let waitingTimerInterval = null;
 let waitingStartTime = null;
 let lastAgent = '';
 let isInvestigating = false;
+let activeInvestigationId = null;
 
 // ── Agent labels for waiting messages ─────────────────────────
 const AGENT_LABELS = {
@@ -37,6 +39,12 @@ const AGENT_LABELS = {
 // ── Init Attack Graph on page load ────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     AttackGraph.init('.graph-svg');
+
+    if (historyBtn) {
+        historyBtn.addEventListener('click', () => {
+            document.body.classList.toggle('show-history');
+        });
+    }
 });
 
 // ── Waiting Timer ─────────────────────────────────────────────
@@ -92,6 +100,12 @@ function stopInvestigation() {
         eventSource.close();
         eventSource = null;
     }
+
+    if (activeInvestigationId) {
+        fetch(`/api/investigate/${activeInvestigationId}/cancel`, { method: 'POST' })
+            .catch((err) => console.warn('Cancel request failed', err));
+    }
+
     stopWaitingTimer();
     setStatus('done', 'STOPPED');
     setButtonInvestigating(false);
@@ -146,6 +160,7 @@ function startInvestigation() {
     eventSource.addEventListener('start', (e) => {
         const data = JSON.parse(e.data);
         console.log('Investigation started:', data.investigation_id);
+        activeInvestigationId = data.investigation_id || null;
         if (data.deep_thinking) {
             addTimelineItem('System', '🧠 Mode', '深度思考模式已启用', 0);
         }
@@ -180,6 +195,7 @@ function startInvestigation() {
         stopWaitingTimer();
         setStatus('done', 'COMPLETE');
         setButtonInvestigating(false);
+        activeInvestigationId = null;
         if (eventSource) {
             eventSource.close();
             eventSource = null;
@@ -190,6 +206,7 @@ function startInvestigation() {
         stopWaitingTimer();
         setStatus('done', 'ERROR');
         setButtonInvestigating(false);
+        activeInvestigationId = null;
         if (eventSource) {
             eventSource.close();
             eventSource = null;
@@ -251,7 +268,7 @@ function predictNextAgent(currentAgent, action) {
 
 function addTimelineItem(agent, action, content, iteration) {
     const item = document.createElement('div');
-    item.className = 'timeline-item';
+    item.className = 'timeline-item drawer-card expanded';
     item.setAttribute('data-agent', agent);
 
     let rendered = content
@@ -260,13 +277,22 @@ function addTimelineItem(agent, action, content, iteration) {
         .replace(/\n/g, '<br>');
 
     item.innerHTML = `
-        <div class="timeline-header">
-            <span class="agent-badge" data-agent="${agent}">${agent}</span>
-            <span class="action-label">${action}</span>
-            <span class="iteration-label">iter ${iteration}</span>
+        <div class="timeline-header drawer-toggle">
+            <span class="iteration-label">${String(iteration).padStart(2, '0')}</span>
+            <div class="drawer-meta">
+                <span class="agent-badge" data-agent="${agent}">${agent}</span>
+                <span class="action-label">${action}</span>
+            </div>
+            <span class="expand-icon" aria-hidden="true"></span>
         </div>
-        <div class="timeline-body">${rendered}</div>
+        <div class="drawer-body">
+            <div class="timeline-body">${rendered}</div>
+        </div>
     `;
+
+    item.querySelector('.drawer-toggle').addEventListener('click', () => {
+        item.classList.toggle('expanded');
+    });
 
     timeline.appendChild(item);
     item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
