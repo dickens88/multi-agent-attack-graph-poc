@@ -5,6 +5,7 @@ __pycache__/
 *.so
 .Python
 env/
+.venv/
 build/
 develop-eggs/
 dist/
@@ -22,6 +23,16 @@ wheels/
 *.egg
 venv/
 .env
+.env.*
+!.env.example
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # IDEs
 .vscode/
@@ -35,3 +46,16 @@ Thumbs.db
 .agent/
 brain/
 notebooks/
+
+# Frontend dependencies and build caches
+node_modules/
+frontend/node_modules/
+frontend/.vite/
+*.tsbuildinfo
+
+# Logs and runtime artifacts
+*.log
+logs/
+artifacts/*.log
+artifacts/*.tmp
+artifacts/*.json
