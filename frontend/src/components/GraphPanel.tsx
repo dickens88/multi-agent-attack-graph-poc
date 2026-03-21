@@ -11,6 +11,8 @@ type SimNode = d3.SimulationNodeDatum & {
   id: string;
   label: string;
   type: string;
+  color?: string;
+  icon?: string;
   risk_score?: number;
   properties?: Record<string, unknown>;
 };
@@ -21,11 +23,19 @@ type SimLink = d3.SimulationLinkDatum<SimNode> & {
   label: string;
 };
 
-const NODE_COLORS: Record<string, { fill: string; stroke: string }> = {
-  IP: { fill: "#1f2937", stroke: "#fb923c" },
-  Host: { fill: "#1f2937", stroke: "#22d3ee" },
-  Attacker: { fill: "#3f1d2e", stroke: "#fb7185" },
-  Vulnerability: { fill: "#3a2e1f", stroke: "#facc15" },
+const NODE_STYLES: Record<string, { bg: string; border: string }> = {
+  Host: { bg: "#00e5ff22", border: "#00e5ff" },
+  User: { bg: "#b388ff22", border: "#b388ff" },
+  IOC: { bg: "#ff174422", border: "#ff1744" },
+  Alert: { bg: "#ffab0022", border: "#ffab00" },
+  Process: { bg: "#39ff1422", border: "#39ff14" },
+  Network_Connection: { bg: "#448aff22", border: "#448aff" },
+  File: { bg: "#78909c22", border: "#78909c" },
+  Email: { bg: "#ff6e4022", border: "#ff6e40" },
+  MITRE_Technique: { bg: "#ea80fc22", border: "#ea80fc" },
+  Vulnerability: { bg: "#ffd74022", border: "#ffd740" },
+  IP: { bg: "#378ADD22", border: "#378ADD" },
+  Attacker: { bg: "#E24B4A22", border: "#E24B4A" },
 };
 
 export function GraphPanel({ graphData, isUpdating }: Props) {
@@ -41,6 +51,8 @@ export function GraphPanel({ graphData, isUpdating }: Props) {
         id: String(n.id),
         label: n.label || String(n.id),
         type: n.type || "IP",
+        color: n.color,
+        icon: n.icon,
         risk_score: n.risk_score,
         properties: n.properties,
       });
@@ -122,8 +134,13 @@ export function GraphPanel({ graphData, isUpdating }: Props) {
     nodeGroup
       .append("circle")
       .attr("r", (d) => 11 + (d.risk_score ?? 0.25) * 10)
-      .attr("fill", (d) => NODE_COLORS[d.type]?.fill ?? "#1f2937")
-      .attr("stroke", (d) => NODE_COLORS[d.type]?.stroke ?? "#f97316")
+      .attr("fill", (d) => {
+        if (d.color) {
+          return `${d.color}33`;
+        }
+        return NODE_STYLES[d.type]?.bg ?? "#2d2d2d";
+      })
+      .attr("stroke", (d) => d.color ?? NODE_STYLES[d.type]?.border ?? "#666")
       .attr("stroke-width", 2);
 
     nodeGroup
@@ -225,9 +242,9 @@ export function GraphPanel({ graphData, isUpdating }: Props) {
       )}
 
       <div className="graph-legend">
-        {Object.entries(NODE_COLORS).map(([type, style]) => (
+        {Object.entries(NODE_STYLES).map(([type, style]) => (
           <div key={type} className="graph-legend-item">
-            <span className="graph-legend-dot" style={{ background: style.fill, borderColor: style.stroke }} />
+            <span className="graph-legend-dot" style={{ background: style.bg, borderColor: style.border }} />
             {type}
           </div>
         ))}

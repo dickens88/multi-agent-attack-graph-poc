@@ -15,7 +15,9 @@ export type StreamEventType =
 export interface GraphNode {
   id: string;
   label: string;
-  type: "IP" | "Host" | "Attacker" | "Vulnerability";
+  type: string;
+  color?: string;
+  icon?: string;
   risk_score?: number;
   properties?: Record<string, unknown>;
 }

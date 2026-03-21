@@ -37,15 +37,236 @@ def _parse_subagent_context(ns: tuple, metadata: dict, fallback_counter: int) ->
     return False, None, agent_name
 
 
+# ── Node display config（与旧版 graph_utils.py 保持一致）──────────────────
+_NODE_COLORS = {
+    "Host": "#00e5ff",
+    "User": "#b388ff",
+    "IOC": "#ff1744",
+    "Alert": "#ffab00",
+    "Process": "#39ff14",
+    "Network_Connection": "#448aff",
+    "File": "#78909c",
+    "Email": "#ff6e40",
+    "MITRE_Technique": "#ea80fc",
+    "Vulnerability": "#ffd740",
+    # 兼容当前版本已有的类型
+    "IP": "#378ADD",
+    "Attacker": "#E24B4A",
+}
+
+_NODE_ICONS = {
+    "Host": "🖥",
+    "User": "👤",
+    "IOC": "⚠",
+    "Alert": "🔔",
+    "Process": "⚙",
+    "Network_Connection": "🌐",
+    "File": "📄",
+    "Email": "✉",
+    "MITRE_Technique": "🎯",
+    "Vulnerability": "🛡",
+    "IP": "🔵",
+    "Attacker": "💀",
+}
+
+
+def _serialize_value(val):
+    """Recursively serialize Neo4j driver objects to plain Python types."""
+    # Neo4j Node
+    if hasattr(val, "labels") and hasattr(val, "items"):
+        d = dict(val.items())
+        d["_labels"] = list(val.labels)
+        return {k: _serialize_value(v) for k, v in d.items()}
+
+    # Neo4j Relationship
+    if hasattr(val, "type") and hasattr(val, "items") and not isinstance(val, dict):
+        d = dict(val.items())
+        d["_type"] = val.type
+        d["_start"] = val.start_node.get("id") or val.start_node.get("ip") or str(val.start_node.id)
+        d["_end"] = val.end_node.get("id") or val.end_node.get("ip") or str(val.end_node.id)
+        return {k: _serialize_value(v) for k, v in d.items()}
+
+    # Neo4j Path
+    if hasattr(val, "nodes") and hasattr(val, "relationships"):
+        return {
+            "nodes": [_serialize_value(n) for n in val.nodes],
+            "relationships": [_serialize_value(r) for r in val.relationships],
+        }
+
+    if isinstance(val, list):
+        return [_serialize_value(v) for v in val]
+
+    if isinstance(val, dict):
+        return {k: _serialize_value(v) for k, v in val.items()}
+
+    try:
+        json.dumps(val)
+        return val
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def _pick_node_id(obj: dict) -> str | None:
+    """Derive a stable identifier from a node dict."""
+    return obj.get("id") or obj.get("ip") or obj.get("name") or obj.get("value") or obj.get("src_ip")
+
+
+def _pick_node_label(obj: dict) -> str:
+    """Pick a human-readable label."""
+    return obj.get("name") or obj.get("id") or obj.get("ip") or obj.get("value") or "?"
+
+
+def _build_node(obj: dict) -> dict | None:
+    """Convert a serialized Neo4j node dict (with _labels) into a graph node."""
+    labels = obj.get("_labels", [])
+    nid = _pick_node_id(obj)
+    if not nid:
+        return None
+    node_type = labels[0] if labels else "Unknown"
+    properties = {k: v for k, v in obj.items() if not k.startswith("_")}
+    return {
+        "id": str(nid),
+        "label": _pick_node_label(obj),
+        "type": node_type,
+        "color": _NODE_COLORS.get(node_type, "#90a4ae"),
+        "icon": _NODE_ICONS.get(node_type, "●"),
+        "properties": properties,
+    }
+
+
+def _scan_rows_for_nodes_and_edges(rows: list[dict]) -> tuple[dict[str, dict], list[dict]]:
+    """
+    Scan result rows, extract all nodes (with _labels) and edges (with _type).
+    Returns (nodes_map {id: node}, edges list).
+
+    This mirrors the logic in the old graph_utils.extract_graph_entities().
+    """
+    nodes_map: dict[str, dict] = {}
+    edges_set: set[tuple] = set()
+    edges: list[dict] = []
+
+    for row in rows:
+        row_nodes: list[dict] = []
+        rel_type: str | None = None
+        rel_start: str | None = None
+        rel_end: str | None = None
+
+        for key, val in row.items():
+            if not isinstance(val, dict):
+                if key in ("rel_type", "action", "relationship", "type") and isinstance(val, str):
+                    rel_type = val
+                continue
+
+            if "_labels" in val:
+                node = _build_node(val)
+                if node:
+                    if node["id"] not in nodes_map:
+                        nodes_map[node["id"]] = node
+                    row_nodes.append(node)
+
+            elif "_type" in val:
+                rel_type = val["_type"]
+                rel_start = str(val.get("_start", "")) or None
+                rel_end = str(val.get("_end", "")) or None
+
+            elif "nodes" in val and "relationships" in val:
+                for n_obj in val.get("nodes", []):
+                    if isinstance(n_obj, dict) and "_labels" in n_obj:
+                        node = _build_node(n_obj)
+                        if node and node["id"] not in nodes_map:
+                            nodes_map[node["id"]] = node
+                            row_nodes.append(node)
+                for r_obj in val.get("relationships", []):
+                    if isinstance(r_obj, dict) and "_type" in r_obj:
+                        rt = r_obj["_type"]
+                        rs = str(r_obj.get("_start", "")) or None
+                        re_ = str(r_obj.get("_end", "")) or None
+                        if rs and re_:
+                            key_ = (rs, re_, rt)
+                            if key_ not in edges_set:
+                                edges_set.add(key_)
+                                edges.append({"source": rs, "target": re_, "label": rt})
+
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and "_labels" in item:
+                        node = _build_node(item)
+                        if node and node["id"] not in nodes_map:
+                            nodes_map[node["id"]] = node
+
+        if rel_start and rel_end and rel_type:
+            key_ = (rel_start, rel_end, rel_type)
+            if key_ not in edges_set:
+                edges_set.add(key_)
+                edges.append({"source": rel_start, "target": rel_end, "label": rel_type})
+
+        elif len(row_nodes) >= 2 and rel_type:
+            src, tgt = row_nodes[0], row_nodes[1]
+            key_ = (src["id"], tgt["id"], rel_type)
+            if key_ not in edges_set:
+                edges_set.add(key_)
+                edges.append({"source": src["id"], "target": tgt["id"], "label": rel_type})
+
+        elif len(row_nodes) == 2 and not rel_type:
+            src, tgt = row_nodes[0], row_nodes[1]
+            key_ = (src["id"], tgt["id"], "RELATED")
+            if key_ not in edges_set:
+                edges_set.add(key_)
+                edges.append({"source": src["id"], "target": tgt["id"], "label": "RELATED"})
+
+    return nodes_map, edges
+
+
+def _fetch_subgraph_for_ids(node_ids: list[str]) -> tuple[dict[str, dict], list[dict]]:
+    """
+    Given a list of node IDs, query all relationships between/around them.
+    This is the key step that connects isolated nodes.
+    Mirrors the old retriever._maybe_update_graph() subgraph query.
+    """
+    if not node_ids:
+        return {}, []
+
+    from tools.graph_tools import get_driver
+
+    cypher = (
+        "MATCH (a)-[r]->(b) "
+        "WHERE a.id IN $ids OR b.id IN $ids "
+        "   OR a.ip IN $ids OR b.ip IN $ids "
+        "RETURN a, type(r) AS rel_type, r, b "
+        "LIMIT 200"
+    )
+    try:
+        with get_driver().session() as session:
+            result = session.run(cypher, {"ids": node_ids})
+            rows = []
+            for record in result:
+                row = {}
+                for key in record.keys():
+                    row[key] = _serialize_value(record[key])
+                rows.append(row)
+        return _scan_rows_for_nodes_and_edges(rows)
+    except Exception as e:
+        logger.warning("Subgraph fetch failed: %s", e)
+        return {}, []
+
+
 def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
-    """Extract graph-renderable nodes/edges from selected tool results."""
+    """
+    Extract graph-renderable nodes/edges from tool results.
+
+    Strategy:
+    1. Parse the tool result and extract all nodes (preserving full properties + labels).
+    2. For any nodes found, run a subgraph query to fetch all relationships
+       connecting them (and their immediate neighbors) — this prevents isolated nodes.
+    3. Merge everything and return.
+    """
     graph_tools = {
         "get_node_by_ip",
-        "get_node_with_context",
         "run_cypher_query",
         "get_node_neighbors",
         "trace_attack_path",
         "find_attacker_origin",
+        "get_node_with_context",
     }
     if tool_name not in graph_tools:
         return None
@@ -53,233 +274,127 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
     try:
         data = json.loads(tool_result)
     except Exception:
-        logger.info("[graph_extract] tool=%s json_parse_failed", tool_name)
         return None
 
-    nodes, edges, highlight = [], [], []
-
-    def _append_node(node_id: str | None, label: str | None = None, node_type: str = "IP", **extra):
-        if not node_id:
-            return
-        nodes.append(
-            {
-                "id": node_id,
-                "label": label or node_id,
-                "type": node_type,
-                **({k: v for k, v in extra.items() if v is not None}),
-            }
-        )
-
-    def _parse_node_like(value):
-        if not isinstance(value, dict):
-            return None
-        node_id = value.get("ip") or value.get("id") or value.get("name")
-        if not node_id:
-            return None
-        node_type = value.get("nodeType") or value.get("type") or "IP"
-        return {
-            "id": str(node_id),
-            "label": value.get("hostname") or value.get("label") or str(node_id),
-            "type": str(node_type),
-            "risk_score": value.get("risk_score"),
-            "properties": value,
-        }
+    nodes_map: dict[str, dict] = {}
+    edges_set: set[tuple] = set()
+    edges: list[dict] = []
+    highlight: list[str] = []
 
     if tool_name == "get_node_by_ip" and data.get("found"):
-        node = data["node"]
-        nodes.append(
-            {
-                "id": node.get("ip"),
-                "label": node.get("hostname") or node.get("ip"),
-                "type": "IP",
-                "risk_score": node.get("risk_score", 0),
-                "properties": node,
-            }
-        )
-        highlight = [node.get("ip")]
+        node_obj = data["node"]
+        node = _build_node(node_obj) if isinstance(node_obj, dict) and "_labels" in node_obj else None
+        if node is None:
+            ip = node_obj.get("ip") or data.get("ip")
+            if ip:
+                labels = node_obj.get("_labels", ["IP"])
+                node_type = labels[0] if labels else "IP"
+                node = {
+                    "id": ip,
+                    "label": node_obj.get("name") or node_obj.get("hostname") or ip,
+                    "type": node_type,
+                    "color": _NODE_COLORS.get(node_type, "#378ADD"),
+                    "icon": _NODE_ICONS.get(node_type, "🔵"),
+                    "properties": {k: v for k, v in node_obj.items() if not k.startswith("_")},
+                }
+        if node:
+            nodes_map[node["id"]] = node
+            highlight = [node["id"]]
+
+    elif tool_name == "run_cypher_query" and data.get("status") == "success":
+        nm, el = _scan_rows_for_nodes_and_edges(data.get("rows", []))
+        nodes_map.update(nm)
+        for e in el:
+            key_ = (e["source"], e["target"], e["label"])
+            if key_ not in edges_set:
+                edges_set.add(key_)
+                edges.append(e)
 
     elif tool_name == "get_node_neighbors":
         src_ip = data.get("ip")
         if src_ip:
-            nodes.append({"id": src_ip, "label": src_ip, "type": "IP"})
-        for neighbor in data.get("neighbors", []):
-            nip = neighbor.get("neighbor_ip")
-            if nip:
-                nodes.append(
-                    {
-                        "id": nip,
-                        "label": neighbor.get("neighbor_hostname") or nip,
-                        "type": "IP",
-                        "risk_score": neighbor.get("risk_score", 0),
-                    }
-                )
-                edges.append(
-                    {
-                        "source": src_ip,
-                        "target": nip,
-                        "label": neighbor.get("rel_type", ""),
-                        "timestamp": neighbor.get("timestamp"),
-                    }
-                )
+            nodes_map[src_ip] = {
+                "id": src_ip,
+                "label": src_ip,
+                "type": "IP",
+                "color": _NODE_COLORS["IP"],
+                "icon": _NODE_ICONS["IP"],
+                "properties": {},
+            }
+        for nb in data.get("neighbors", []):
+            nip = nb.get("neighbor_ip")
+            if not nip:
+                continue
+            ntype = nb.get("neighbor_type", "IP")
+            nodes_map[nip] = {
+                "id": nip,
+                "label": nb.get("neighbor_hostname") or nb.get("neighbor_name") or nip,
+                "type": ntype,
+                "color": _NODE_COLORS.get(ntype, "#90a4ae"),
+                "icon": _NODE_ICONS.get(ntype, "●"),
+                "properties": {k: v for k, v in nb.items() if not k.startswith("neighbor_")},
+            }
+            if src_ip:
+                key_ = (src_ip, nip, nb.get("rel_type", ""))
+                if key_ not in edges_set:
+                    edges_set.add(key_)
+                    edges.append({"source": src_ip, "target": nip, "label": nb.get("rel_type", "")})
 
     elif tool_name == "trace_attack_path":
-        seen_nodes = set()
+        seen: set[str] = set()
         for path in data.get("paths", []):
             chain = path.get("ip_chain", [])
             rel_types = path.get("rel_types", [])
-            timestamps = path.get("timestamps", [])
             for i, ip in enumerate(chain):
-                if ip and ip not in seen_nodes:
-                    nodes.append({"id": ip, "label": ip, "type": "IP"})
-                    seen_nodes.add(ip)
-                if i > 0 and chain[i - 1] and ip:
-                    edges.append(
-                        {
-                            "source": chain[i - 1],
-                            "target": ip,
-                            "label": rel_types[i - 1] if i - 1 < len(rel_types) else "",
-                            "timestamp": timestamps[i - 1] if i - 1 < len(timestamps) else None,
-                        }
-                    )
-
-    elif tool_name == "run_cypher_query":
-        rows = data.get("rows", [])
-        logger.info(
-            "[graph_extract] tool=run_cypher_query status=%s rows=%s",
-            data.get("status"),
-            len(rows) if isinstance(rows, list) else "n/a",
-        )
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-
-            # Common normalized patterns:
-            # {source, target}, {source_ip, target_ip}, {src_ip, dst_ip}
-            src = row.get("source") or row.get("source_ip") or row.get("src_ip") or row.get("src")
-            tgt = row.get("target") or row.get("target_ip") or row.get("dst_ip") or row.get("dst")
-            if isinstance(src, str):
-                _append_node(src, row.get("source_hostname") or row.get("src_hostname") or src)
-            if isinstance(tgt, str):
-                _append_node(tgt, row.get("target_hostname") or row.get("dst_hostname") or tgt)
-            if isinstance(src, str) and isinstance(tgt, str):
-                edges.append(
-                    {
-                        "source": src,
-                        "target": tgt,
-                        "label": row.get("rel_type") or row.get("relationship") or row.get("label") or row.get("type(r)") or "RELATED",
-                        "timestamp": row.get("timestamp"),
+                if ip and ip not in seen:
+                    nodes_map[ip] = {
+                        "id": ip,
+                        "label": ip,
+                        "type": "IP",
+                        "color": _NODE_COLORS["IP"],
+                        "icon": _NODE_ICONS["IP"],
+                        "properties": {},
                     }
-                )
-
-            # Single-IP rows also become nodes (e.g. RETURN n.ip, src.ip, dst.ip)
-            for key, value in row.items():
-                if not isinstance(value, str):
-                    continue
-                lk = key.lower()
-                if lk in {"ip", "n.ip", "src.ip", "dst.ip", "source_ip", "target_ip", "src_ip", "dst_ip", "target_ip", "neighbor_ip"} or lk.endswith("_ip"):
-                    _append_node(value, value)
-
-            # Parse any node-like objects in row values
-            for value in row.values():
-                if isinstance(value, dict):
-                    parsed = _parse_node_like(value)
-                    if parsed:
-                        nodes.append(parsed)
-
-            # Parse explicit path-style arrays
-            ip_chain = row.get("ip_chain")
-            if isinstance(ip_chain, list) and len(ip_chain) >= 2:
-                rel_types = row.get("rel_types") if isinstance(row.get("rel_types"), list) else []
-                timestamps = row.get("timestamps") if isinstance(row.get("timestamps"), list) else []
-                for i, ip in enumerate(ip_chain):
-                    if isinstance(ip, str):
-                        _append_node(ip)
-                    if i > 0 and isinstance(ip_chain[i - 1], str) and isinstance(ip, str):
-                        edges.append(
-                            {
-                                "source": ip_chain[i - 1],
-                                "target": ip,
-                                "label": rel_types[i - 1] if i - 1 < len(rel_types) else "RELATED",
-                                "timestamp": timestamps[i - 1] if i - 1 < len(timestamps) else None,
-                            }
-                        )
+                    seen.add(ip)
+                if i > 0 and chain[i - 1] and ip:
+                    rt = rel_types[i - 1] if i - 1 < len(rel_types) else "ATTACKED"
+                    key_ = (chain[i - 1], ip, rt)
+                    if key_ not in edges_set:
+                        edges_set.add(key_)
+                        edges.append({"source": chain[i - 1], "target": ip, "label": rt})
 
     elif tool_name == "find_attacker_origin" and data.get("found"):
         attacker = data["attacker"]
-        nodes.append(
-            {
-                "id": f"attacker:{attacker.get('attacker_id')}",
-                "label": attacker.get("group") or attacker.get("attacker_id"),
-                "type": "Attacker",
-                "properties": attacker,
-            }
-        )
-        highlight = [f"attacker:{attacker.get('attacker_id')}"]
+        aid = f"attacker:{attacker.get('attacker_id')}"
+        nodes_map[aid] = {
+            "id": aid,
+            "label": attacker.get("group") or attacker.get("attacker_id"),
+            "type": "Attacker",
+            "color": _NODE_COLORS["Attacker"],
+            "icon": _NODE_ICONS["Attacker"],
+            "properties": {k: v for k, v in attacker.items()},
+        }
+        highlight = [aid]
 
-    elif tool_name == "get_node_with_context" and data.get("found"):
-        node_data = data["node"]
-        src_ip = node_data.get("ip")
-        if src_ip:
-            nodes.append(
-                {
-                    "id": src_ip,
-                    "label": node_data.get("hostname") or src_ip,
-                    "type": "IP",
-                    "risk_score": node_data.get("risk_score", 0),
-                    "properties": node_data,
-                }
-            )
-            highlight = [src_ip]
+    if nodes_map:
+        sub_nodes, sub_edges = _fetch_subgraph_for_ids(list(nodes_map.keys()))
+        for nid, node in sub_nodes.items():
+            if nid not in nodes_map:
+                nodes_map[nid] = node
+        for e in sub_edges:
+            key_ = (e["source"], e["target"], e["label"])
+            if key_ not in edges_set:
+                edges_set.add(key_)
+                edges.append(e)
 
-        for nb in data.get("neighbors", []):
-            nip = nb.get("neighbor_ip")
-            if nip:
-                nodes.append(
-                    {
-                        "id": nip,
-                        "label": nb.get("neighbor_hostname") or nip,
-                        "type": nb.get("neighbor_type", "IP"),
-                        "risk_score": nb.get("neighbor_risk_score", 0),
-                    }
-                )
-
-        for edge in data.get("edges", []):
-            if edge.get("source") and edge.get("target"):
-                edges.append(
-                    {
-                        "source": edge["source"],
-                        "target": edge["target"],
-                        "label": edge.get("label", ""),
-                    }
-                )
-
-    if not nodes and not edges:
+    if not nodes_map and not edges:
         return None
 
-    unique_nodes = {}
-    for n in nodes:
-        node_id = n.get("id")
-        if node_id:
-            unique_nodes[node_id] = {**unique_nodes.get(node_id, {}), **n}
-
-    unique_edges = {}
-    for e in edges:
-        s, t, l = e.get("source"), e.get("target"), e.get("label", "")
-        if s and t:
-            unique_edges[f"{s}→{t}:{l}"] = e
-
-    graph_payload = {
-        "nodes": list(unique_nodes.values()),
-        "edges": list(unique_edges.values()),
+    return {
+        "nodes": list(nodes_map.values()),
+        "edges": edges,
         "highlight": highlight,
     }
-    logger.info(
-        "[graph_extract] tool=%s extracted nodes=%d edges=%d",
-        tool_name,
-        len(graph_payload["nodes"]),
-        len(graph_payload["edges"]),
-    )
-    return graph_payload
 
 
 def _sse(event_type: str, data: dict) -> str:
@@ -527,24 +642,6 @@ async def stream_investigation(user_query: str, thread_id: str):
                 elif agent_name == "report-agent":
                     final_result, persisted_file = _persist_report_markdown(final_result)
 
-                if agent_name == "graph-visualizer-agent":
-                    try:
-                        viz_data = json.loads(final_result)
-                        graph_nodes = viz_data.get("nodes", [])
-                        graph_edges = viz_data.get("edges", [])
-                        if graph_nodes or graph_edges:
-                            yield _sse(
-                                "graph_update",
-                                {
-                                    "type": "graph_update",
-                                    "nodes": graph_nodes,
-                                    "edges": graph_edges,
-                                    "highlight": [],
-                                },
-                            )
-                    except Exception:
-                        pass
-
                 yield _sse(
                     "subagent_complete",
                     {
@@ -556,6 +653,11 @@ async def stream_investigation(user_query: str, thread_id: str):
                     },
                 )
                 del active_subagents[finished_call_id]
+
+                # 生成调查报告后立即结束流程，跳过后续图谱维护阶段
+                if agent_name == "report-agent":
+                    yield _sse("done", {"type": "done"})
+                    return
 
     yield _sse("done", {"type": "done"})
 

@@ -4,6 +4,42 @@ from typing import Optional
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 
+
+def _serialize_value(val):
+    """Recursively serialize Neo4j driver objects to plain Python types."""
+    # Neo4j Node
+    if hasattr(val, "labels") and hasattr(val, "items"):
+        d = dict(val.items())
+        d["_labels"] = list(val.labels)
+        return {k: _serialize_value(v) for k, v in d.items()}
+
+    # Neo4j Relationship
+    if hasattr(val, "type") and hasattr(val, "items") and not isinstance(val, dict):
+        d = dict(val.items())
+        d["_type"] = val.type
+        d["_start"] = val.start_node.get("id") or val.start_node.get("ip") or str(val.start_node.id)
+        d["_end"] = val.end_node.get("id") or val.end_node.get("ip") or str(val.end_node.id)
+        return {k: _serialize_value(v) for k, v in d.items()}
+
+    # Neo4j Path
+    if hasattr(val, "nodes") and hasattr(val, "relationships"):
+        return {
+            "nodes": [_serialize_value(n) for n in val.nodes],
+            "relationships": [_serialize_value(r) for r in val.relationships],
+        }
+
+    if isinstance(val, list):
+        return [_serialize_value(v) for v in val]
+
+    if isinstance(val, dict):
+        return {k: _serialize_value(v) for k, v in val.items()}
+
+    try:
+        json.dumps(val)
+        return val
+    except (TypeError, ValueError):
+        return str(val)
+
 load_dotenv()
 
 _driver = None
@@ -20,17 +56,11 @@ def get_driver():
 
 
 def get_node_by_ip(ip: str) -> str:
-    """Look up a single IP node and return its properties.
-
-    Use for: simple IP existence checks, single-node attribute lookups.
-    Do NOT use for: multi-hop traversal, path tracing, or relationship queries.
-
-    Returns JSON string with node properties, or a not-found message.
-    """
-    query = "MATCH (n:IP {ip: $ip}) RETURN n LIMIT 1"
+    """Look up a single IP node and return its full properties and labels."""
+    query = "MATCH (n {ip: $ip}) RETURN n LIMIT 1"
     with get_driver().session() as session:
         result = session.run(query, {"ip": ip})
-        records = [dict(r["n"]) for r in result]
+        records = [_serialize_value(r["n"]) for r in result]
         if not records:
             return json.dumps({"found": False, "ip": ip})
         return json.dumps({"found": True, "node": records[0]})
@@ -102,10 +132,10 @@ def run_cypher_query(query: str, params: Optional[dict] = None) -> str:
     """Execute a Cypher query against the attack graph database.
 
     Use for: any direct Cypher execution after query has been composed.
-    The query must be a valid Cypher string — use nlp_to_cypher() first if
-    starting from natural language.
+    The query must be a valid Cypher string.
 
-    Returns JSON string with result rows, or error details on failure.
+    Returns JSON with full node objects (including _labels and all properties),
+    relationship objects (including _type), and scalar values.
     Max 100 rows returned by default (add LIMIT in query to override).
     """
     if params is None:
@@ -113,7 +143,12 @@ def run_cypher_query(query: str, params: Optional[dict] = None) -> str:
     try:
         with get_driver().session() as session:
             result = session.run(query, params)
-            rows = [dict(r) for r in result]
+            rows = []
+            for record in result:
+                row = {}
+                for key in record.keys():
+                    row[key] = _serialize_value(record[key])
+                rows.append(row)
             return json.dumps({"status": "success", "rows": rows, "count": len(rows)})
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e), "query": query})

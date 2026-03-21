@@ -11,7 +11,6 @@ export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   "graph-query-agent": "图查询执行",
   "tracer-agent": "攻击溯源",
   "report-agent": "报告生成",
-  "graph-visualizer-agent": "图谱维护",
   "unknown-agent": "子 Agent",
 };
 
@@ -20,7 +19,6 @@ export const AGENT_COLORS: Record<string, string> = {
   "graph-query-agent": "#0369a1",
   "tracer-agent": "#b45309",
   "report-agent": "#065f46",
-  "graph-visualizer-agent": "#7c2d12",
   "unknown-agent": "#374151",
 };
 
