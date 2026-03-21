@@ -1,101 +1,371 @@
 import { useState, useCallback, useRef } from "react";
 import type {
   InvestigationState,
-  SubAgentState,
+  TimelineEntry,
   GraphData,
   Todo,
 } from "../types/stream-events";
 
-function summarizeArgs(args?: Record<string, unknown>): string {
-  if (!args || Object.keys(args).length === 0) return "无参数";
-  const serialized = JSON.stringify(args);
-  return serialized.length > 90 ? `${serialized.slice(0, 90)}...` : serialized;
-}
-
-function summarizeResult(result?: string): string {
-  if (!result) return "无返回";
-  const normalized = result.replace(/\s+/g, " ").trim();
-  return normalized.length > 100 ? `${normalized.slice(0, 100)}...` : normalized;
-}
-
-function inferResultStatus(result: string): "success" | "error" {
-  const text = result.toLowerCase();
-  if (text.includes("error") || text.includes("failed") || text.includes("exception")) return "error";
-  return "success";
-}
-
-function normalizeTodos(rawTodos: unknown): Todo[] {
-  if (!Array.isArray(rawTodos)) return [];
-  return rawTodos.map((item, index) => {
-    const record = (item ?? {}) as Record<string, unknown>;
-    const rawStatus = (record.status as string) || "pending";
-    const status: Todo["status"] =
-      rawStatus === "in_progress" || rawStatus === "completed" ? rawStatus : "pending";
-    const text = String(record.text ?? record.content ?? "").trim();
-    return {
-      id: (record.id as number | string | undefined) ?? `todo_${index}_${Date.now()}`,
-      text: text || `未命名待办 ${index + 1}`,
-      status,
-    };
-  });
-}
-
-function parseWriteTodosResult(resultText: string): Todo[] | null {
-  const text = resultText.trim();
-  if (!text) return null;
-
-  const tryParse = (candidate: string): Todo[] | null => {
-    try {
-      const parsed = JSON.parse(candidate) as unknown;
-      if (Array.isArray(parsed)) return normalizeTodos(parsed);
-      if (parsed && typeof parsed === "object") {
-        const record = parsed as Record<string, unknown>;
-        if (Array.isArray(record.todos)) return normalizeTodos(record.todos);
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  };
-
-  const direct = tryParse(text);
-  if (direct) return direct;
-
-  // Fallback: extract first JSON array/object from mixed log text.
-  const startIdx = text.search(/[\[{]/);
-  if (startIdx === -1) return null;
-  const sliced = text.slice(startIdx);
-  const endArray = sliced.lastIndexOf("]");
-  const endObject = sliced.lastIndexOf("}");
-  const endIdx = Math.max(endArray, endObject);
-  if (endIdx === -1) return null;
-  return tryParse(sliced.slice(0, endIdx + 1));
-}
-
 export const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  "nl2cypher-agent": "NL → Cypher 转换",
+  "nl2cypher-agent": "NL → Cypher",
   "graph-query-agent": "图查询执行",
-  "tracer-agent": "攻击路径溯源",
+  "tracer-agent": "攻击溯源",
   "report-agent": "报告生成",
+  "graph-visualizer-agent": "图谱维护",
   "unknown-agent": "子 Agent",
 };
 
-export const AGENT_ICONS: Record<string, string> = {
-  "nl2cypher-agent": "🔤",
-  "graph-query-agent": "🔍",
-  "tracer-agent": "🕵️",
-  "report-agent": "📄",
+export const AGENT_COLORS: Record<string, string> = {
+  "nl2cypher-agent": "#7c3aed",
+  "graph-query-agent": "#0369a1",
+  "tracer-agent": "#b45309",
+  "report-agent": "#065f46",
+  "graph-visualizer-agent": "#7c2d12",
+  "unknown-agent": "#374151",
 };
 
 const initialState = (): InvestigationState => ({
   status: "idle",
-  orchestrator_text: "",
-  orchestrator_tool_calls: [],
-  todos: [],
-  subagents: {},
-  subagent_order: [],
+  timeline: [],
+  orchestrator_todos: [],
+  agent_todos: {},
   graph: { nodes: [], edges: [], highlight: [] },
 });
+
+let _entryIdCounter = 0;
+const nextId = () => `e${++_entryIdCounter}`;
+
+function normalizeTodos(raw: unknown): Todo[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item, i) => {
+    const r = (item ?? {}) as Record<string, unknown>;
+    const status =
+      r.status === "in_progress" || r.status === "completed"
+        ? r.status
+        : "pending";
+    return {
+      id: r.id ?? `t${i}`,
+      text: String(r.text ?? r.content ?? `任务 ${i + 1}`).trim(),
+      status: status as Todo["status"],
+    };
+  });
+}
+
+function parseTodosFromResult(result: string): Todo[] | null {
+  const text = result.trim();
+  try {
+    const p = JSON.parse(text);
+    if (Array.isArray(p)) return normalizeTodos(p);
+    if (p && typeof p === "object") {
+      if (Array.isArray((p as Record<string, unknown>).todos)) {
+        return normalizeTodos((p as Record<string, unknown>).todos);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  const start = text.search(/[\[{]/);
+  if (start === -1) return null;
+  const slice = text.slice(start);
+  const end = Math.max(slice.lastIndexOf("]"), slice.lastIndexOf("}"));
+  if (end === -1) return null;
+
+  try {
+    const p = JSON.parse(slice.slice(0, end + 1)) as
+      | Record<string, unknown>
+      | unknown[];
+    if (Array.isArray(p)) return normalizeTodos(p);
+    if (p?.todos) return normalizeTodos(p.todos as unknown[]);
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+function mergeGraphData(current: GraphData, incoming: GraphData): GraphData {
+  const nodeIds = new Set(current.nodes.map((n) => n.id));
+  const newNodes = incoming.nodes.filter((n) => !nodeIds.has(n.id));
+
+  const edgeKey = (e: { source: string; target: string; label: string }) =>
+    `${e.source}→${e.target}:${e.label}`;
+  const edgeKeys = new Set(current.edges.map(edgeKey));
+  const newEdges = incoming.edges.filter((e) => !edgeKeys.has(edgeKey(e)));
+
+  return {
+    nodes: [...current.nodes, ...newNodes],
+    edges: [...current.edges, ...newEdges],
+    highlight: incoming.highlight ?? current.highlight,
+  };
+}
+
+function applyEvent(
+  state: InvestigationState,
+  eventType: string,
+  payload: Record<string, unknown>
+): InvestigationState {
+  const now = Date.now();
+
+  switch (eventType) {
+    case "orchestrator_token": {
+      const last = state.timeline.at(-1);
+      if (last?.kind === "orchestrator_thinking") {
+        const updated = state.timeline.map((e, i) =>
+          i === state.timeline.length - 1
+            ? {
+                ...e,
+                content:
+                  e.kind === "orchestrator_thinking"
+                    ? e.content + String(payload.content ?? "")
+                    : e.content,
+              }
+            : e
+        );
+        return { ...state, timeline: updated };
+      }
+      return {
+        ...state,
+        timeline: [
+          ...state.timeline,
+          {
+            kind: "orchestrator_thinking",
+            id: nextId(),
+            content: String(payload.content ?? ""),
+            ts: now,
+          },
+        ],
+      };
+    }
+
+    case "orchestrator_tool_call": {
+      const entry: TimelineEntry = {
+        kind: "orchestrator_tool",
+        id: nextId(),
+        tool: String(payload.tool ?? ""),
+        args: (payload.args as Record<string, unknown>) ?? {},
+        status: "calling",
+        ts: now,
+      };
+      return { ...state, timeline: [...state.timeline, entry] };
+    }
+
+    case "orchestrator_tool_result": {
+      const toolName = String(payload.tool ?? "");
+      const resultText = String(payload.result ?? "");
+      const todos = toolName === "write_todos" ? parseTodosFromResult(resultText) : null;
+
+      let matched = false;
+      const updated = [...state.timeline]
+        .reverse()
+        .map((e) => {
+          if (
+            !matched &&
+            e.kind === "orchestrator_tool" &&
+            e.tool === toolName &&
+            e.status === "calling"
+          ) {
+            matched = true;
+            return {
+              ...e,
+              result: resultText,
+              graph_data: (payload.graph_data as GraphData) ?? null,
+              status: "done" as const,
+            };
+          }
+          return e;
+        })
+        .reverse();
+
+      let next: InvestigationState = { ...state, timeline: updated };
+      if (todos) next = { ...next, orchestrator_todos: todos };
+      if (payload.graph_data) {
+        next = {
+          ...next,
+          graph: mergeGraphData(next.graph, payload.graph_data as GraphData),
+        };
+      }
+      return next;
+    }
+
+    case "todos_update":
+      return { ...state, orchestrator_todos: normalizeTodos(payload.todos) };
+
+    case "todos_update_realtime": {
+      const source = String(payload.source ?? "orchestrator");
+      const callId = (payload.call_id as string | null) ?? null;
+      const todos = normalizeTodos(payload.todos);
+      if (!callId) return { ...state, orchestrator_todos: todos };
+      return {
+        ...state,
+        agent_todos: {
+          ...state.agent_todos,
+          [callId]: { source, call_id: callId, todos },
+        },
+      };
+    }
+
+    case "subagent_start": {
+      const callId = String(payload.call_id ?? "");
+      const agentName = String(payload.agent_name ?? "unknown-agent");
+      const entry: TimelineEntry = {
+        kind: "subagent_lifecycle",
+        id: nextId(),
+        call_id: callId,
+        agent_name: agentName,
+        status: "start",
+        task_description: String(payload.task_description ?? ""),
+        ts: now,
+      };
+      return { ...state, timeline: [...state.timeline, entry] };
+    }
+
+    case "subagent_token": {
+      const callId = String(payload.call_id ?? "");
+      const content = String(payload.content ?? "");
+      const agentName = String(payload.agent_name ?? "unknown-agent");
+
+      const last = [...state.timeline]
+        .reverse()
+        .find((e) => e.kind === "subagent_thinking" && e.call_id === callId);
+
+      if (last) {
+        const updated = state.timeline.map((e) =>
+          e.id === last.id && e.kind === "subagent_thinking"
+            ? { ...e, content: e.content + content }
+            : e
+        );
+        return { ...state, timeline: updated };
+      }
+
+      return {
+        ...state,
+        timeline: [
+          ...state.timeline,
+          {
+            kind: "subagent_thinking",
+            id: nextId(),
+            call_id: callId,
+            agent_name: agentName,
+            content,
+            ts: now,
+          },
+        ],
+      };
+    }
+
+    case "subagent_tool_call": {
+      const callId = String(payload.call_id ?? "");
+      const agentName = String(payload.agent_name ?? "unknown-agent");
+      const entry: TimelineEntry = {
+        kind: "subagent_tool",
+        id: nextId(),
+        call_id: callId,
+        agent_name: agentName,
+        tool: String(payload.tool ?? ""),
+        args: (payload.args as Record<string, unknown>) ?? {},
+        status: "calling",
+        ts: now,
+      };
+      return { ...state, timeline: [...state.timeline, entry] };
+    }
+
+    case "subagent_tool_result": {
+      const callId = String(payload.call_id ?? "");
+      const agentName = String(payload.agent_name ?? "unknown-agent");
+      const toolName = String(payload.tool ?? "");
+      const resultText = String(payload.result ?? "");
+      const todos = toolName === "write_todos" ? parseTodosFromResult(resultText) : null;
+
+      let matched = false;
+      const updated = [...state.timeline]
+        .reverse()
+        .map((e) => {
+          if (
+            !matched &&
+            e.kind === "subagent_tool" &&
+            e.call_id === callId &&
+            e.tool === toolName &&
+            e.status === "calling"
+          ) {
+            matched = true;
+            return {
+              ...e,
+              result: resultText,
+              graph_data: (payload.graph_data as GraphData) ?? null,
+              status: "done" as const,
+            };
+          }
+          return e;
+        })
+        .reverse();
+
+      let next: InvestigationState = { ...state, timeline: updated };
+      if (todos) {
+        next = {
+          ...next,
+          agent_todos: {
+            ...next.agent_todos,
+            [callId]: { source: agentName, call_id: callId, todos },
+          },
+        };
+      }
+      if (payload.graph_data) {
+        next = {
+          ...next,
+          graph: mergeGraphData(next.graph, payload.graph_data as GraphData),
+        };
+      }
+      return next;
+    }
+
+    case "subagent_complete": {
+      const callId = String(payload.call_id ?? "");
+      const agentName = String(payload.agent_name ?? "unknown-agent");
+      const result = String(payload.result ?? "");
+      const updated = state.timeline.map((e) =>
+        e.kind === "subagent_lifecycle" && e.call_id === callId
+          ? { ...e, status: "complete" as const }
+          : e
+      );
+      return {
+        ...state,
+        timeline: [
+          ...updated,
+          {
+            kind: "subagent_result",
+            id: nextId(),
+            call_id: callId,
+            agent_name: agentName,
+            result,
+            ts: now,
+          },
+        ],
+      };
+    }
+
+    case "graph_update": {
+      const incoming = payload as unknown as GraphData;
+      const merged = mergeGraphData(state.graph, incoming);
+      console.debug("[graph_update_recv]", {
+        incomingNodes: incoming.nodes?.length ?? 0,
+        incomingEdges: incoming.edges?.length ?? 0,
+        totalNodes: merged.nodes.length,
+        totalEdges: merged.edges.length,
+      });
+      return {
+        ...state,
+        graph: merged,
+      };
+    }
+
+    case "done":
+      return { ...state, status: "done" };
+
+    default:
+      return state;
+  }
+}
 
 export function useInvestigationStream() {
   const [state, setState] = useState<InvestigationState>(initialState());
@@ -106,48 +376,49 @@ export function useInvestigationStream() {
     const abort = new AbortController();
     abortRef.current = abort;
 
-    setState(initialState());
-    setState((s) => ({ ...s, status: "running" }));
+    setState({ ...initialState(), status: "running" });
 
     const url = `/api/investigate?query=${encodeURIComponent(query)}&thread_id=${threadId}`;
-    const response = await fetch(url, { signal: abort.signal });
-    if (!response.body) {
-      setState((s) => ({ ...s, status: "error" }));
-      return;
-    }
+    try {
+      const response = await fetch(url, { signal: abort.signal });
+      if (!response.body) {
+        setState((s) => ({ ...s, status: "error" }));
+        return;
+      }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop() ?? "";
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
 
-      for (const part of parts) {
-        if (!part.trim()) continue;
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          const evMatch = part.match(/^event: (.+)$/m);
+          const dataMatch = part.match(/^data: (.+)$/ms);
+          if (!evMatch || !dataMatch) continue;
 
-        const eventMatch = part.match(/^event: (.+)$/m);
-        const dataMatch = part.match(/^data: (.+)$/ms);
-        if (!eventMatch || !dataMatch) continue;
-
-        const eventType = eventMatch[1].trim();
-        let payload: Record<string, unknown>;
-        try {
-          payload = JSON.parse(dataMatch[1]);
-        } catch {
-          continue;
+          try {
+            const payload = JSON.parse(dataMatch[1]) as Record<string, unknown>;
+            setState((prev) => applyEvent(prev, evMatch[1].trim(), payload));
+          } catch {
+            // ignore malformed chunk
+          }
         }
-
-        setState((prev) => applyEvent(prev, eventType, payload));
+      }
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== "AbortError") {
+        setState((s) => ({ ...s, status: "error" }));
       }
     }
 
-    setState((s) => ({ ...s, status: "done" }));
+    setState((s) => (s.status === "running" ? { ...s, status: "done" } : s));
   }, []);
 
   const reset = useCallback(() => {
@@ -155,260 +426,5 @@ export function useInvestigationStream() {
     setState(initialState());
   }, []);
 
-  return { state, submit, reset, AGENT_DISPLAY_NAMES, AGENT_ICONS };
-}
-
-function applyEvent(
-  state: InvestigationState,
-  eventType: string,
-  payload: Record<string, unknown>
-): InvestigationState {
-  switch (eventType) {
-    case "orchestrator_token":
-      return {
-        ...state,
-        orchestrator_text: state.orchestrator_text + (payload.content as string),
-      };
-
-    case "orchestrator_tool_call": {
-      return {
-        ...state,
-        orchestrator_tool_calls: [
-          ...state.orchestrator_tool_calls,
-          {
-            type: "call",
-            tool: payload.tool as string,
-            args: payload.args as Record<string, unknown>,
-            timestamp: Date.now(),
-            summary: summarizeArgs(payload.args as Record<string, unknown>),
-            severity: "neutral",
-            result_status: "pending",
-            updated_at: Date.now(),
-          },
-        ],
-      };
-    }
-
-    case "orchestrator_tool_result": {
-      const resultText = payload.result as string;
-      const resultStatus = inferResultStatus(resultText);
-      const toolName = payload.tool as string;
-      const parsedTodos = toolName === "write_todos" ? parseWriteTodosResult(resultText) : null;
-      const nextState: InvestigationState = {
-        ...state,
-        orchestrator_tool_calls: [
-          ...state.orchestrator_tool_calls,
-          {
-            type: "result",
-            tool: payload.tool as string,
-            result: resultText,
-            graph_data: payload.graph_data as GraphData | null,
-            timestamp: Date.now(),
-            summary: summarizeResult(resultText),
-            severity: resultStatus === "success" ? "success" : "error",
-            result_status: resultStatus,
-            updated_at: Date.now(),
-          },
-        ],
-        ...(parsedTodos ? { todos: parsedTodos } : {}),
-      };
-      if (payload.graph_data) {
-        return mergeGraphData(nextState, payload.graph_data as GraphData);
-      }
-      return nextState;
-    }
-
-    case "todos_update":
-      return { ...state, todos: normalizeTodos(payload.todos) };
-
-    case "subagent_start": {
-      const call_id = payload.call_id as string;
-      const agent_name = payload.agent_name as string;
-      const newAgent: SubAgentState = {
-        call_id,
-        agent_name,
-        task_description: (payload.task_description as string) || "",
-        status: "running",
-        token_buffer: "",
-        tool_calls: [],
-        started_at: Date.now(),
-      };
-      return {
-        ...state,
-        subagents: { ...state.subagents, [call_id]: newAgent },
-        subagent_order: [...state.subagent_order, call_id],
-      };
-    }
-
-    case "subagent_token": {
-      const call_id = payload.call_id as string;
-      const agent = state.subagents[call_id];
-      const tokenText = payload.content as string;
-      if (!agent) {
-        const autoAgentName = (payload.agent_name as string) || "unknown-agent";
-        return {
-          ...state,
-          subagents: {
-            ...state.subagents,
-            [call_id]: {
-              call_id,
-              agent_name: autoAgentName,
-              task_description: "",
-              status: "running",
-              token_buffer: tokenText,
-              tool_calls: [],
-              started_at: Date.now(),
-            },
-          },
-          subagent_order: state.subagent_order.includes(call_id)
-            ? state.subagent_order
-            : [...state.subagent_order, call_id],
-        };
-      }
-      return {
-        ...state,
-        subagents: {
-          ...state.subagents,
-          [call_id]: {
-            ...agent,
-            token_buffer: agent.token_buffer + tokenText,
-          },
-        },
-      };
-    }
-
-    case "subagent_tool_call": {
-      const call_id = payload.call_id as string;
-      const agent = state.subagents[call_id];
-      if (!agent) return state;
-      return {
-        ...state,
-        subagents: {
-          ...state.subagents,
-          [call_id]: {
-            ...agent,
-            tool_calls: [
-              ...agent.tool_calls,
-              {
-                type: "call",
-                tool: payload.tool as string,
-                args: payload.args as Record<string, unknown>,
-                timestamp: Date.now(),
-                summary: summarizeArgs(payload.args as Record<string, unknown>),
-                severity: "neutral",
-                result_status: "pending",
-                updated_at: Date.now(),
-              },
-            ],
-          },
-        },
-      };
-    }
-
-    case "subagent_tool_result": {
-      const call_id = payload.call_id as string;
-      const agent = state.subagents[call_id];
-      if (!agent) return state;
-      const resultText = payload.result as string;
-      const resultStatus = inferResultStatus(resultText);
-      const toolName = payload.tool as string;
-      const parsedTodos = toolName === "write_todos" ? parseWriteTodosResult(resultText) : null;
-      const nextState: InvestigationState = {
-        ...state,
-        subagents: {
-          ...state.subagents,
-          [call_id]: {
-            ...agent,
-            tool_calls: [
-              ...agent.tool_calls,
-              {
-                type: "result",
-                tool: payload.tool as string,
-                result: resultText,
-                graph_data: payload.graph_data as GraphData | null,
-                timestamp: Date.now(),
-                summary: summarizeResult(resultText),
-                severity: resultStatus === "success" ? "success" : "error",
-                result_status: resultStatus,
-                updated_at: Date.now(),
-              },
-            ],
-          },
-        },
-        ...(parsedTodos ? { todos: parsedTodos } : {}),
-      };
-      if (payload.graph_data) {
-        return mergeGraphData(nextState, payload.graph_data as GraphData);
-      }
-      return nextState;
-    }
-
-    case "subagent_complete": {
-      const call_id = payload.call_id as string;
-      const agent = state.subagents[call_id];
-      if (!agent) {
-        const autoAgentName = (payload.agent_name as string) || "unknown-agent";
-        return {
-          ...state,
-          subagents: {
-            ...state.subagents,
-            [call_id]: {
-              call_id,
-              agent_name: autoAgentName,
-              task_description: "",
-              status: "complete",
-              token_buffer: "",
-              tool_calls: [],
-              result: payload.result as string,
-              started_at: Date.now(),
-              completed_at: Date.now(),
-            },
-          },
-          subagent_order: state.subagent_order.includes(call_id)
-            ? state.subagent_order
-            : [...state.subagent_order, call_id],
-        };
-      }
-      return {
-        ...state,
-        subagents: {
-          ...state.subagents,
-          [call_id]: {
-            ...agent,
-            status: "complete",
-            result: payload.result as string,
-            completed_at: Date.now(),
-          },
-        },
-      };
-    }
-
-    case "graph_update":
-      return mergeGraphData(state, payload as unknown as GraphData);
-
-    case "done":
-      return { ...state, status: "done" };
-
-    default:
-      return state;
-  }
-}
-
-function mergeGraphData(state: InvestigationState, incoming: GraphData): InvestigationState {
-  const existingNodeIds = new Set(state.graph.nodes.map((n) => n.id));
-  const newNodes = incoming.nodes.filter((n) => !existingNodeIds.has(n.id));
-
-  const edgeKey = (e: { source: string; target: string; label: string }) =>
-    `${e.source}→${e.target}:${e.label}`;
-  const existingEdgeKeys = new Set(state.graph.edges.map(edgeKey));
-  const newEdges = incoming.edges.filter((e) => !existingEdgeKeys.has(edgeKey(e)));
-
-  return {
-    ...state,
-    graph: {
-      nodes: [...state.graph.nodes, ...newNodes],
-      edges: [...state.graph.edges, ...newEdges],
-      highlight: incoming.highlight ?? state.graph.highlight,
-    },
-  };
+  return { state, submit, reset, AGENT_DISPLAY_NAMES, AGENT_COLORS };
 }

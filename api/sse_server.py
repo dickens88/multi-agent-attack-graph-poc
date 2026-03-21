@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI
@@ -9,6 +10,8 @@ from orchestrator import orchestrator
 app = FastAPI()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+logger = logging.getLogger("sse_server")
+logger.setLevel(logging.INFO)
 
 
 def _parse_subagent_context(ns: tuple, metadata: dict, fallback_counter: int) -> tuple[bool, str | None, str]:
@@ -38,6 +41,7 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
     """Extract graph-renderable nodes/edges from selected tool results."""
     graph_tools = {
         "get_node_by_ip",
+        "get_node_with_context",
         "run_cypher_query",
         "get_node_neighbors",
         "trace_attack_path",
@@ -49,9 +53,37 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
     try:
         data = json.loads(tool_result)
     except Exception:
+        logger.info("[graph_extract] tool=%s json_parse_failed", tool_name)
         return None
 
     nodes, edges, highlight = [], [], []
+
+    def _append_node(node_id: str | None, label: str | None = None, node_type: str = "IP", **extra):
+        if not node_id:
+            return
+        nodes.append(
+            {
+                "id": node_id,
+                "label": label or node_id,
+                "type": node_type,
+                **({k: v for k, v in extra.items() if v is not None}),
+            }
+        )
+
+    def _parse_node_like(value):
+        if not isinstance(value, dict):
+            return None
+        node_id = value.get("ip") or value.get("id") or value.get("name")
+        if not node_id:
+            return None
+        node_type = value.get("nodeType") or value.get("type") or "IP"
+        return {
+            "id": str(node_id),
+            "label": value.get("hostname") or value.get("label") or str(node_id),
+            "type": str(node_type),
+            "risk_score": value.get("risk_score"),
+            "properties": value,
+        }
 
     if tool_name == "get_node_by_ip" and data.get("found"):
         node = data["node"]
@@ -110,6 +142,68 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
                         }
                     )
 
+    elif tool_name == "run_cypher_query":
+        rows = data.get("rows", [])
+        logger.info(
+            "[graph_extract] tool=run_cypher_query status=%s rows=%s",
+            data.get("status"),
+            len(rows) if isinstance(rows, list) else "n/a",
+        )
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            # Common normalized patterns:
+            # {source, target}, {source_ip, target_ip}, {src_ip, dst_ip}
+            src = row.get("source") or row.get("source_ip") or row.get("src_ip") or row.get("src")
+            tgt = row.get("target") or row.get("target_ip") or row.get("dst_ip") or row.get("dst")
+            if isinstance(src, str):
+                _append_node(src, row.get("source_hostname") or row.get("src_hostname") or src)
+            if isinstance(tgt, str):
+                _append_node(tgt, row.get("target_hostname") or row.get("dst_hostname") or tgt)
+            if isinstance(src, str) and isinstance(tgt, str):
+                edges.append(
+                    {
+                        "source": src,
+                        "target": tgt,
+                        "label": row.get("rel_type") or row.get("relationship") or row.get("label") or row.get("type(r)") or "RELATED",
+                        "timestamp": row.get("timestamp"),
+                    }
+                )
+
+            # Single-IP rows also become nodes (e.g. RETURN n.ip, src.ip, dst.ip)
+            for key, value in row.items():
+                if not isinstance(value, str):
+                    continue
+                lk = key.lower()
+                if lk in {"ip", "n.ip", "src.ip", "dst.ip", "source_ip", "target_ip", "src_ip", "dst_ip", "target_ip", "neighbor_ip"} or lk.endswith("_ip"):
+                    _append_node(value, value)
+
+            # Parse any node-like objects in row values
+            for value in row.values():
+                if isinstance(value, dict):
+                    parsed = _parse_node_like(value)
+                    if parsed:
+                        nodes.append(parsed)
+
+            # Parse explicit path-style arrays
+            ip_chain = row.get("ip_chain")
+            if isinstance(ip_chain, list) and len(ip_chain) >= 2:
+                rel_types = row.get("rel_types") if isinstance(row.get("rel_types"), list) else []
+                timestamps = row.get("timestamps") if isinstance(row.get("timestamps"), list) else []
+                for i, ip in enumerate(ip_chain):
+                    if isinstance(ip, str):
+                        _append_node(ip)
+                    if i > 0 and isinstance(ip_chain[i - 1], str) and isinstance(ip, str):
+                        edges.append(
+                            {
+                                "source": ip_chain[i - 1],
+                                "target": ip,
+                                "label": rel_types[i - 1] if i - 1 < len(rel_types) else "RELATED",
+                                "timestamp": timestamps[i - 1] if i - 1 < len(timestamps) else None,
+                            }
+                        )
+
     elif tool_name == "find_attacker_origin" and data.get("found"):
         attacker = data["attacker"]
         nodes.append(
@@ -122,10 +216,70 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
         )
         highlight = [f"attacker:{attacker.get('attacker_id')}"]
 
+    elif tool_name == "get_node_with_context" and data.get("found"):
+        node_data = data["node"]
+        src_ip = node_data.get("ip")
+        if src_ip:
+            nodes.append(
+                {
+                    "id": src_ip,
+                    "label": node_data.get("hostname") or src_ip,
+                    "type": "IP",
+                    "risk_score": node_data.get("risk_score", 0),
+                    "properties": node_data,
+                }
+            )
+            highlight = [src_ip]
+
+        for nb in data.get("neighbors", []):
+            nip = nb.get("neighbor_ip")
+            if nip:
+                nodes.append(
+                    {
+                        "id": nip,
+                        "label": nb.get("neighbor_hostname") or nip,
+                        "type": nb.get("neighbor_type", "IP"),
+                        "risk_score": nb.get("neighbor_risk_score", 0),
+                    }
+                )
+
+        for edge in data.get("edges", []):
+            if edge.get("source") and edge.get("target"):
+                edges.append(
+                    {
+                        "source": edge["source"],
+                        "target": edge["target"],
+                        "label": edge.get("label", ""),
+                    }
+                )
+
     if not nodes and not edges:
         return None
 
-    return {"nodes": nodes, "edges": edges, "highlight": highlight}
+    unique_nodes = {}
+    for n in nodes:
+        node_id = n.get("id")
+        if node_id:
+            unique_nodes[node_id] = {**unique_nodes.get(node_id, {}), **n}
+
+    unique_edges = {}
+    for e in edges:
+        s, t, l = e.get("source"), e.get("target"), e.get("label", "")
+        if s and t:
+            unique_edges[f"{s}→{t}:{l}"] = e
+
+    graph_payload = {
+        "nodes": list(unique_nodes.values()),
+        "edges": list(unique_edges.values()),
+        "highlight": highlight,
+    }
+    logger.info(
+        "[graph_extract] tool=%s extracted nodes=%d edges=%d",
+        tool_name,
+        len(graph_payload["nodes"]),
+        len(graph_payload["edges"]),
+    )
+    return graph_payload
 
 
 def _sse(event_type: str, data: dict) -> str:
@@ -154,6 +308,55 @@ def _extract_json_payload(raw_text: str) -> dict | None:
                     return parsed
             except Exception:
                 return None
+    return None
+
+
+def _extract_todos_payload(raw: str):
+    """Best-effort parser for write_todos tool output.
+
+    Handles strict JSON, markdown-wrapped JSON and python-like repr text.
+    Returns list[dict] or None.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and isinstance(parsed.get("todos"), list):
+            return parsed.get("todos")
+    except Exception:
+        pass
+
+    start = min([i for i in [text.find("["), text.find("{")] if i != -1], default=-1)
+    end = max(text.rfind("]"), text.rfind("}"))
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    snippet = text[start : end + 1]
+    try:
+        parsed = json.loads(snippet)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and isinstance(parsed.get("todos"), list):
+            return parsed.get("todos")
+    except Exception:
+        pass
+
+    # final fallback for python repr (single quotes / True / False)
+    try:
+        import ast
+
+        parsed = ast.literal_eval(snippet)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and isinstance(parsed.get("todos"), list):
+            return parsed.get("todos")
+    except Exception:
+        return None
+
     return None
 
 
@@ -265,10 +468,45 @@ async def stream_investigation(user_query: str, thread_id: str):
             }
             if is_subagent:
                 payload["call_id"] = call_id
+                payload["agent_name"] = active_subagents.get(call_id, inferred_agent_name)
             yield _sse(event_type, payload)
 
             if graph_data:
+                logger.info(
+                    "[graph_update_emit] source=%s tool=%s call_id=%s nodes=%d edges=%d",
+                    "subagent" if is_subagent else "orchestrator",
+                    tool_name,
+                    call_id,
+                    len(graph_data.get("nodes", [])),
+                    len(graph_data.get("edges", [])),
+                )
                 yield _sse("graph_update", {"type": "graph_update", **graph_data})
+
+            if tool_name == "write_todos":
+                todos_list = _extract_todos_payload(result_str)
+                if todos_list:
+                    source_agent = (
+                        active_subagents.get(call_id, "orchestrator")
+                        if is_subagent
+                        else "orchestrator"
+                    )
+                    yield _sse(
+                        "todos_update_realtime",
+                        {
+                            "type": "todos_update_realtime",
+                            "source": source_agent,
+                            "call_id": call_id if is_subagent else None,
+                            "todos": todos_list,
+                        },
+                    )
+                    if not is_subagent:
+                        yield _sse(
+                            "todos_update",
+                            {
+                                "type": "todos_update",
+                                "todos": todos_list,
+                            },
+                        )
 
         if token.type == "ai" and token.content:
             event_type = "subagent_token" if is_subagent else "orchestrator_token"
@@ -289,6 +527,24 @@ async def stream_investigation(user_query: str, thread_id: str):
                 elif agent_name == "report-agent":
                     final_result, persisted_file = _persist_report_markdown(final_result)
 
+                if agent_name == "graph-visualizer-agent":
+                    try:
+                        viz_data = json.loads(final_result)
+                        graph_nodes = viz_data.get("nodes", [])
+                        graph_edges = viz_data.get("edges", [])
+                        if graph_nodes or graph_edges:
+                            yield _sse(
+                                "graph_update",
+                                {
+                                    "type": "graph_update",
+                                    "nodes": graph_nodes,
+                                    "edges": graph_edges,
+                                    "highlight": [],
+                                },
+                            )
+                    except Exception:
+                        pass
+
                 yield _sse(
                     "subagent_complete",
                     {
@@ -300,19 +556,6 @@ async def stream_investigation(user_query: str, thread_id: str):
                     },
                 )
                 del active_subagents[finished_call_id]
-
-    async for chunk in orchestrator.astream(
-        None,
-        config=config,
-        stream_mode="updates",
-        subgraphs=False,
-        version="v2",
-    ):
-        if chunk["type"] == "updates":
-            for _, data in chunk["data"].items():
-                todos = data.get("todos")
-                if todos:
-                    yield _sse("todos_update", {"type": "todos_update", "todos": todos})
 
     yield _sse("done", {"type": "done"})
 

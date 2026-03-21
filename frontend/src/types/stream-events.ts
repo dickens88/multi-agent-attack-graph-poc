@@ -3,6 +3,7 @@ export type StreamEventType =
   | "orchestrator_tool_call"
   | "orchestrator_tool_result"
   | "todos_update"
+  | "todos_update_realtime"
   | "subagent_start"
   | "subagent_token"
   | "subagent_tool_call"
@@ -38,37 +39,24 @@ export interface Todo {
   status: "pending" | "in_progress" | "completed";
 }
 
-export interface ToolCallEvent {
-  type: "call" | "result";
-  tool: string;
-  args?: Record<string, unknown>;
-  result?: string;
-  graph_data?: GraphData | null;
-  timestamp: number;
-  summary?: string;
-  severity?: "neutral" | "success" | "warning" | "error";
-  result_status?: "pending" | "success" | "error";
-  updated_at?: number;
-}
+export type TimelineEntry =
+  | { kind: "orchestrator_thinking"; id: string; content: string; ts: number }
+  | { kind: "orchestrator_tool"; id: string; tool: string; args: Record<string, unknown>; result?: string; graph_data?: GraphData | null; status: "calling" | "done" | "error"; ts: number }
+  | { kind: "subagent_lifecycle"; id: string; call_id: string; agent_name: string; status: "start" | "running" | "complete" | "error"; task_description: string; ts: number }
+  | { kind: "subagent_thinking"; id: string; call_id: string; agent_name: string; content: string; ts: number }
+  | { kind: "subagent_tool"; id: string; call_id: string; agent_name: string; tool: string; args: Record<string, unknown>; result?: string; graph_data?: GraphData | null; status: "calling" | "done" | "error"; ts: number }
+  | { kind: "subagent_result"; id: string; call_id: string; agent_name: string; result: string; ts: number };
 
-export interface SubAgentState {
-  call_id: string;
-  agent_name: string;
-  task_description: string;
-  status: "running" | "complete" | "error";
-  token_buffer: string;
-  tool_calls: ToolCallEvent[];
-  result?: string;
-  started_at: number;
-  completed_at?: number;
+export interface AgentTodos {
+  source: string;
+  call_id: string | null;
+  todos: Todo[];
 }
 
 export interface InvestigationState {
   status: "idle" | "running" | "done" | "error";
-  orchestrator_text: string;
-  orchestrator_tool_calls: ToolCallEvent[];
-  todos: Todo[];
-  subagents: Record<string, SubAgentState>;
-  subagent_order: string[];
+  timeline: TimelineEntry[];
+  orchestrator_todos: Todo[];
+  agent_todos: Record<string, AgentTodos>;
   graph: GraphData;
 }

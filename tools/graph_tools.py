@@ -36,6 +36,68 @@ def get_node_by_ip(ip: str) -> str:
         return json.dumps({"found": True, "node": records[0]})
 
 
+def get_node_with_context(ip: str) -> str:
+    """Query an IP node and fetch all direct neighbors and relationships.
+
+    Returns JSON with: {found, node, neighbors, edges}
+    """
+    query = """
+    MATCH (n:IP {ip: $ip})
+    OPTIONAL MATCH (n)-[r]-(neighbor)
+    RETURN
+        n,
+        collect(DISTINCT {
+            neighbor_ip: neighbor.ip,
+            neighbor_hostname: neighbor.hostname,
+            neighbor_risk_score: neighbor.risk_score,
+            neighbor_type: labels(neighbor)[0],
+            rel_type: type(r),
+            rel_direction: CASE WHEN startNode(r) = n THEN 'out' ELSE 'in' END,
+            timestamp: r.timestamp,
+            method: r.method
+        }) as neighbors
+    LIMIT 1
+    """
+    with get_driver().session() as session:
+        result = session.run(query, {"ip": ip})
+        records = list(result)
+        if not records or records[0]["n"] is None:
+            return json.dumps({"found": False, "ip": ip})
+
+        record = records[0]
+        node_data = dict(record["n"])
+        raw_neighbors = record["neighbors"] or []
+        neighbors = [n for n in raw_neighbors if n.get("neighbor_ip")]
+
+        edges = []
+        for nb in neighbors:
+            if nb.get("rel_direction") == "out":
+                edges.append(
+                    {
+                        "source": ip,
+                        "target": nb["neighbor_ip"],
+                        "label": nb.get("rel_type", ""),
+                    }
+                )
+            else:
+                edges.append(
+                    {
+                        "source": nb["neighbor_ip"],
+                        "target": ip,
+                        "label": nb.get("rel_type", ""),
+                    }
+                )
+
+        return json.dumps(
+            {
+                "found": True,
+                "node": node_data,
+                "neighbors": neighbors,
+                "edges": edges,
+            }
+        )
+
+
 def run_cypher_query(query: str, params: Optional[dict] = None) -> str:
     """Execute a Cypher query against the attack graph database.
 
@@ -133,3 +195,70 @@ def find_attacker_origin(ip: str) -> str:
         if not records:
             return json.dumps({"found": False, "ip": ip})
         return json.dumps({"found": True, "attacker": records[0]})
+
+
+def get_node_with_context(ip: str) -> str:
+    """Query an IP node AND automatically fetch all its direct neighbors and relationships.
+
+    Use this instead of get_node_by_ip() when you want graph visualization context.
+    Returns the node's properties plus all 1-hop neighbors and edges,
+    ensuring the graph panel always has meaningful topology to display.
+
+    Returns JSON with: {found, node, neighbors, edges}
+    """
+    query = """
+    MATCH (n:IP {ip: $ip})
+    OPTIONAL MATCH (n)-[r]-(neighbor)
+    RETURN
+        n,
+        collect(DISTINCT {
+            neighbor_ip: neighbor.ip,
+            neighbor_hostname: neighbor.hostname,
+            neighbor_risk_score: neighbor.risk_score,
+            neighbor_type: labels(neighbor)[0],
+            rel_type: type(r),
+            rel_direction: CASE WHEN startNode(r) = n THEN 'out' ELSE 'in' END,
+            timestamp: r.timestamp,
+            method: r.method
+        }) as neighbors
+    LIMIT 1
+    """
+    with get_driver().session() as session:
+        result = session.run(query, {"ip": ip})
+        records = list(result)
+        if not records or records[0]["n"] is None:
+            return json.dumps({"found": False, "ip": ip})
+
+        record = records[0]
+        node_data = dict(record["n"])
+        raw_neighbors = record["neighbors"] or []
+
+        neighbors = [n for n in raw_neighbors if n.get("neighbor_ip")]
+
+        edges = []
+        for nb in neighbors:
+            if nb.get("rel_direction") == "out":
+                edges.append(
+                    {
+                        "source": ip,
+                        "target": nb["neighbor_ip"],
+                        "label": nb.get("rel_type", ""),
+                    }
+                )
+            else:
+                edges.append(
+                    {
+                        "source": nb["neighbor_ip"],
+                        "target": ip,
+                        "label": nb.get("rel_type", ""),
+                    }
+                )
+
+        return json.dumps(
+            {
+                "found": True,
+                "node": node_data,
+                "neighbors": neighbors,
+                "edges": edges,
+            }
+        )

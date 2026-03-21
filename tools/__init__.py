@@ -1,5 +1,6 @@
 from .graph_tools import (
     get_node_by_ip,
+    get_node_with_context,
     run_cypher_query,
     get_node_neighbors,
     trace_attack_path,
@@ -14,6 +15,7 @@ from .analysis_tools import (
 
 __all__ = [
     "get_node_by_ip",
+    "get_node_with_context",
     "run_cypher_query",
     "get_node_neighbors",
     "trace_attack_path",

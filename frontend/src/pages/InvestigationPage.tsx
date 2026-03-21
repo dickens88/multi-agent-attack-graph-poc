@@ -1,26 +1,22 @@
 import { useState } from "react";
 import { useInvestigationStream } from "../hooks/useInvestigationStream";
-import { InvestigationPanel } from "../components/InvestigationPanel";
+import { Timeline } from "../components/Timeline";
 import { GraphPanel } from "../components/GraphPanel";
 import { TodosPanel } from "../components/TodosPanel";
 
 export function InvestigationPage() {
   const [query, setQuery] = useState("");
-  const { state, submit, reset, AGENT_DISPLAY_NAMES, AGENT_ICONS } = useInvestigationStream();
+  const { state, submit, reset } = useInvestigationStream();
 
   const handleSubmit = () => {
     if (!query.trim() || state.status === "running") return;
-    const threadId = `thread_${Date.now()}`;
-    submit(query.trim(), threadId);
+    submit(query.trim(), `thread_${Date.now()}`);
   };
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="topbar-title-group">
-          <h1 className="topbar-title">调查过程</h1>
-          <p className="topbar-subtitle">角色分层展示执行过程与图谱更新状态</p>
-        </div>
+        <div className="topbar-brand">⚔ 攻击图谱溯源系统</div>
         <div className="query-bar">
           <input
             className="query-input"
@@ -30,8 +26,12 @@ export function InvestigationPage() {
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             disabled={state.status === "running"}
           />
-          <button onClick={handleSubmit} disabled={state.status === "running" || !query.trim()} className="btn-primary">
-            {state.status === "running" ? "调查中..." : "开始调查"}
+          <button
+            onClick={handleSubmit}
+            disabled={state.status === "running" || !query.trim()}
+            className="btn-primary"
+          >
+            {state.status === "running" ? "调查中…" : "开始调查"}
           </button>
           {state.status !== "idle" && (
             <button onClick={reset} className="btn-secondary">
@@ -41,37 +41,41 @@ export function InvestigationPage() {
         </div>
       </header>
 
-      <main className="workspace-grid">
-        <section className="workspace-left">
+      <main className="three-col-grid">
+        <section className="col-timeline">
           <div className="panel-title-bar">
             <span>调查时间线</span>
             <span className="panel-title-meta">
-              {state.status === "running" ? "执行中" : state.status === "done" ? "已完成" : "待执行"}
+              {state.status === "running"
+                ? "• 执行中"
+                : state.status === "done"
+                  ? "已完成"
+                  : ""}
             </span>
           </div>
           <div className="panel-scroll">
-            <InvestigationPanel
-              state={state}
-              agentDisplayNames={AGENT_DISPLAY_NAMES}
-              agentIcons={AGENT_ICONS}
-            />
+            <Timeline entries={state.timeline} />
           </div>
         </section>
 
-        <section className="workspace-right">
-          <div className="workspace-right-grid">
-            <div className="workspace-graph-col">
-              <div className="panel-title-bar">
-                <span>攻击图谱</span>
-                <span className="panel-title-meta">实时可视化</span>
-              </div>
-              <div className="panel-graph">
-                <GraphPanel graphData={state.graph} isUpdating={state.status === "running"} />
-              </div>
-            </div>
-
-            <TodosPanel todos={state.todos} status={state.status} />
+        <section className="col-graph">
+          <div className="panel-title-bar">
+            <span>攻击图谱</span>
+            <span className="panel-title-meta">实时更新</span>
           </div>
+          <div className="panel-graph">
+            <GraphPanel graphData={state.graph} isUpdating={state.status === "running"} />
+          </div>
+        </section>
+
+        <div className="col-graph-spacer" aria-hidden="true" />
+
+        <section className="col-todos">
+          <TodosPanel
+            orchestratorTodos={state.orchestrator_todos}
+            agentTodos={state.agent_todos}
+            status={state.status}
+          />
         </section>
       </main>
     </div>

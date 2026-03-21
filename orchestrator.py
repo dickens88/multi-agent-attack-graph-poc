@@ -7,7 +7,13 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from tools import get_node_by_ip, run_cypher_query, get_node_neighbors
-from subagents import nl2cypher_agent, graph_query_agent, tracer_agent, report_agent
+from subagents import (
+    nl2cypher_agent,
+    graph_query_agent,
+    tracer_agent,
+    report_agent,
+    graph_visualizer_agent,
+)
 
 load_dotenv()
 
@@ -48,6 +54,8 @@ ORCHESTRATOR_PROMPT = """
 1. 调用 write_todos() 列出调查计划
 2. 委派 tracer-agent 进行迭代溯源
 3. 委派 graph-query-agent 补充上下文查询（如需要）
+3.5. 委派 graph-visualizer-agent 拉取所有已发现 IP 的完整图上下文
+     （传入 tracer-agent 返回的 attack_chain 和 compromised_nodes 中的所有 IP）
 4. 默认委派 report-agent 生成最终调查结论（即使用户未显式要求）
 5. 汇总所有发现返回
 
@@ -96,6 +104,7 @@ def create_orchestrator():
             graph_query_agent,
             tracer_agent,
             report_agent,
+            graph_visualizer_agent,
         ],
         system_prompt=ORCHESTRATOR_PROMPT,
         checkpointer=checkpointer,
