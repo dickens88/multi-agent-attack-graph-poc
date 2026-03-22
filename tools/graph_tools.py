@@ -9,6 +9,8 @@ from neo4j import GraphDatabase
 
 from logging_config import get_logger
 
+from .neo4j_serialize import serialize_neo4j_value
+
 load_dotenv()
 
 log = get_logger("lab.tools.graph")
@@ -26,39 +28,6 @@ def get_driver():
     return _driver
 
 
-def _serialize_value(val):
-    """Recursively serialize Neo4j driver objects to plain Python types."""
-    if hasattr(val, "labels") and hasattr(val, "items"):  # Node
-        d = {k: _serialize_value(v) for k, v in dict(val.items()).items()}
-        d["_labels"] = list(val.labels)
-        return d
-    if hasattr(val, "type") and hasattr(val, "items") and not isinstance(val, dict):  # Relationship
-        d = {k: _serialize_value(v) for k, v in dict(val.items()).items()}
-        d["_type"] = val.type
-        try:
-            d["_start"] = (val.start_node.get("id") or val.start_node.get("ip")
-                           or str(val.start_node.id))
-            d["_end"] = (val.end_node.get("id") or val.end_node.get("ip")
-                         or str(val.end_node.id))
-        except Exception:
-            pass
-        return d
-    if hasattr(val, "nodes") and hasattr(val, "relationships"):  # Path
-        return {
-            "nodes": [_serialize_value(n) for n in val.nodes],
-            "relationships": [_serialize_value(r) for r in val.relationships],
-        }
-    if isinstance(val, list):
-        return [_serialize_value(v) for v in val]
-    if isinstance(val, dict):
-        return {k: _serialize_value(v) for k, v in val.items()}
-    try:
-        json.dumps(val)
-        return val
-    except (TypeError, ValueError):
-        return str(val)
-
-
 def _run(query: str, params: dict) -> list[dict]:
     """Execute a query and return fully serialized rows."""
     log.debug(
@@ -70,7 +39,7 @@ def _run(query: str, params: dict) -> list[dict]:
     with get_driver().session() as session:
         result = session.run(query, params)
         rows = [
-            {key: _serialize_value(record[key]) for key in record.keys()}
+            {key: serialize_neo4j_value(record[key]) for key in record.keys()}
             for record in result
         ]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
@@ -104,6 +73,9 @@ def get_node_by_id(node_id: str, reason: str = "", label: str = "") -> str:
 
     Returns JSON: {found, node_type, node, neighbors: [{id, type, label, rel_type, rel_props}]}
     """
+    if not reason.strip():
+        return json.dumps({"status": "error", "error": "reason_required", "tool": "get_node_by_id"})
+
     label_clause = f":{label}" if label else ""
 
     # Try id first, then ip, then name/username as fallback
@@ -162,6 +134,9 @@ def get_node_neighbors(node_id: str, reason: str = "", depth: int = 1, limit: in
 
     Returns JSON: {node_id, depth, neighbors: [{n, rel_type, m}]}
     """
+    if not reason.strip():
+        return json.dumps({"status": "error", "error": "reason_required", "tool": "get_node_neighbors"})
+
     query = f"""
     MATCH (n)
     WHERE n.id = $val OR n.ip = $val OR n.name = $val OR n.username = $val
@@ -190,6 +165,9 @@ def trace_attack_path(node_id: str, reason: str = "", max_hops: int = 6) -> str:
 
     Returns JSON: {node_id, paths_found, paths: [{nodes, relationships, length}]}
     """
+    if not reason.strip():
+        return json.dumps({"status": "error", "error": "reason_required", "tool": "trace_attack_path"})
+
     query = f"""
     MATCH (src)
     WHERE src.id = $val OR src.ip = $val OR src.name = $val OR src.username = $val
@@ -237,6 +215,9 @@ def run_cypher_query(query: str, reason: str = "", params: Optional[dict] = None
 
     Returns JSON: {status, rows, count} or {status, error, query}
     """
+    if not reason.strip():
+        return json.dumps({"status": "error", "error": "reason_required", "tool": "run_cypher_query"})
+
     if params is None:
         params = {}
     try:

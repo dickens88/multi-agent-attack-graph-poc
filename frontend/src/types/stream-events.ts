@@ -2,7 +2,6 @@ export type StreamEventType =
   | "orchestrator_token"
   | "orchestrator_tool_call"
   | "orchestrator_tool_result"
-  | "todos_update"
   | "todos_update_realtime"
   | "subagent_start"
   | "subagent_token"
@@ -56,7 +55,7 @@ export interface AgentTodos {
 }
 
 export interface InvestigationState {
-  status: "idle" | "running" | "done" | "error";
+  status: "idle" | "running" | "done" | "stopped" | "error";
   timeline: TimelineEntry[];
   orchestrator_todos: Todo[];
   agent_todos: Record<string, AgentTodos>;

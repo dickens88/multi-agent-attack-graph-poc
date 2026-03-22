@@ -2,10 +2,10 @@ import os
 
 from dotenv import load_dotenv
 from deepagents import create_deep_agent
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
+from llm_factory import build_chat_model
 from tools import get_node_by_id, run_cypher_query, get_node_neighbors
 from tools.graph_tools import get_live_schema
 from subagents import (
@@ -76,23 +76,6 @@ ORCHESTRATOR_PROMPT = """
 """
 
 
-def _build_main_model() -> ChatOpenAI:
-    """Build OpenAI-compatible chat model from .env settings."""
-    base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-    api_key = os.getenv("OPENAI_API_KEY")
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
-
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required in .env")
-
-    return ChatOpenAI(
-        model=model_name,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=0,
-    )
-
-
 def create_orchestrator():
     """Create and return the configured Orchestrator agent."""
     checkpointer = MemorySaver()
@@ -109,7 +92,7 @@ def create_orchestrator():
 
     # LangGraph compile(debug=True): graph/step tracing to stderr — not the same as LOG_LEVEL=DEBUG.
     orchestrator_instance = create_deep_agent(
-        model=_build_main_model(),
+        model=build_chat_model(),
         tools=[
             get_node_by_id,
             run_cypher_query,

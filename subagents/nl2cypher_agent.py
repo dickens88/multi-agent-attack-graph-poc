@@ -1,27 +1,9 @@
-import os
-
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
 
+from llm_factory import build_chat_model
 from tools import nlp_to_cypher, run_cypher_query
 
 load_dotenv()
-
-
-def _build_subagent_model() -> ChatOpenAI:
-    base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-    api_key = os.getenv("OPENAI_API_KEY")
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required in .env")
-
-    return ChatOpenAI(
-        model=model_name,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=0,
-    )
 
 NL2CYPHER_SYSTEM_PROMPT = """
 # Role: Cypher Query Translator
@@ -39,6 +21,7 @@ NL2CYPHER_SYSTEM_PROMPT = """
 2. 适配模板：
    - 替换 `<<PARAM>>` 占位符为实际参数值
    - 验证关系方向是否正确（参考 graph-schema skill）
+   - 若参数缺失或为空，不得生成查询，先要求补充过滤条件
 
 3. 验证执行：
    - 调用 `run_cypher_query()` 测试执行
@@ -63,6 +46,9 @@ NL2CYPHER_SYSTEM_PROMPT = """
 - 只生成 READ 查询（MATCH/RETURN），不生成 CREATE/DELETE/SET
 - 所有查询必须包含 LIMIT（最大 100）
 - 不自行推测未知的节点标签或关系类型，先查询 graph-schema skill
+- 禁止无条件查询（如 `MATCH (n) RETURN n` 或仅 `MATCH (i:IOC)` 的全量扫描）
+- 每条查询必须带明确的过滤条件（如 `id` / `ip` / `value` / `timestamp` / `type` 等）
+- 如果用户未提供可用于过滤的关键信息，必须先追问或返回需要的条件，不能直接查询
 
 ## 工具调用推理要求
 
@@ -84,5 +70,5 @@ nl2cypher_agent = {
     "system_prompt": NL2CYPHER_SYSTEM_PROMPT,
     "tools": [nlp_to_cypher, run_cypher_query],
     "skills": ["skills"],
-    "model": _build_subagent_model(),
+    "model": build_chat_model(),
 }

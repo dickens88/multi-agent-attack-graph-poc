@@ -1,3 +1,4 @@
+from llm_factory import build_chat_model
 from tools import write_text_file
 
 REPORT_SYSTEM_PROMPT = """
@@ -44,4 +45,5 @@ report_agent = {
     "system_prompt": REPORT_SYSTEM_PROMPT,
     "tools": [write_text_file],
     "skills": [],
+    "model": build_chat_model(),
 }

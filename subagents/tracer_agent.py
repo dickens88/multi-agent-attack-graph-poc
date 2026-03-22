@@ -1,3 +1,8 @@
+import os
+
+from dotenv import load_dotenv
+
+from llm_factory import build_chat_model
 from tools import (
     get_node_by_id,
     get_node_neighbors,
@@ -7,7 +12,16 @@ from tools import (
     write_text_file,
 )
 
-TRACER_SYSTEM_PROMPT = """
+load_dotenv()
+
+
+_MAX_ITERATIONS_RAW = os.getenv("MAX_ITERATIONS", "8")
+try:
+    MAX_ITERATIONS = int(_MAX_ITERATIONS_RAW)
+except ValueError:
+    MAX_ITERATIONS = 8
+
+TRACER_SYSTEM_PROMPT_TEMPLATE = """
 # Role: Attack Path Tracer
 
 ## 职责
@@ -55,7 +69,7 @@ run_cypher_query(
 
 4. **推理**：根据返回的节点类型和邻居，确定下一步追踪方向
 
-### 每次迭代（iteration 1 ~ 5）
+### 每次迭代（iteration 1 ~ {max_iterations}）
 
 **Step A - 推理 + 查询扩展**
 
@@ -126,7 +140,7 @@ run_cypher_query(
 ## 硬性约束
 
 - 每次工具调用前必须输出推理说明
-- 最多 5 次迭代
+- 最多 {max_iterations} 次迭代
 - 每次迭代结束必须执行终止评估
 - 只读查询，不修改数据库
 - 不生成最终报告（由 report-agent 负责）
@@ -135,9 +149,11 @@ run_cypher_query(
 
 - STOP-1: 到达 IOC 终点或攻击入口（无更多上游节点）
 - STOP-2: 与上一轮相比无新实体
-- STOP-3: iteration >= 5
+- STOP-3: iteration >= {max_iterations}
 - CONTINUE: 仍有未探索的关键实体
 """
+
+TRACER_SYSTEM_PROMPT = TRACER_SYSTEM_PROMPT_TEMPLATE.format(max_iterations=MAX_ITERATIONS)
 
 tracer_agent = {
     "name": "tracer-agent",
@@ -158,4 +174,5 @@ tracer_agent = {
         write_text_file,
     ],
     "skills": ["skills"],
+    "model": build_chat_model(),
 }

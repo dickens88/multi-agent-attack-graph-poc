@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import type { TimelineEntry, GraphData } from "../types/stream-events";
 import { AGENT_DISPLAY_NAMES, AGENT_COLORS } from "../hooks/useInvestigationStream";
 
@@ -98,6 +98,12 @@ function InspectorJsonView({ data }: { data: ParsedPayload }) {
 // ============================================================================
 
 export function Timeline({ entries }: Props) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [entries]);
+
   if (entries.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-[13px] text-[#64748B]">
@@ -111,6 +117,7 @@ export function Timeline({ entries }: Props) {
       {entries.map((entry) => (
         <TimelineItem key={entry.id} entry={entry} />
       ))}
+      <div ref={bottomRef} />
     </div>
   );
 }
@@ -211,6 +218,10 @@ function ToolRow({ tool, args, reasoning, result, graphData, status, isOrchestra
   const argsStr = Object.keys(args).length > 0 ? JSON.stringify(args) : "";
   const hasGraphData = !!graphData && (graphData.nodes.length > 0 || graphData.edges.length > 0);
   const reasoningText = typeof reasoning === "string" ? reasoning.trim() : "";
+  const agentDisplayName = AGENT_DISPLAY_NAMES[agentName ?? ""] ?? agentName ?? "Sub-agent";
+  const toolLabel = tool === "task"
+    ? (isOrchestrator ? "Task Dispatch" : agentDisplayName)
+    : tool;
 
   return (
     <div className={`timeline-row ${isOrchestrator ? "" : "timeline-row-indented"}`}>
@@ -218,9 +229,16 @@ function ToolRow({ tool, args, reasoning, result, graphData, status, isOrchestra
       
       <button className="tool-expand-btn" onClick={() => setOpen(!open)}>
         <span>{TOOL_ICONS[tool] ?? "🔧"}</span>
-        <span className="tool-name" style={{ color }}>{tool}</span>
-        
-        {status === "calling" && <span className="status-badge status-running">RUNNING</span>}
+        <div className="tool-head">
+          <span className="tool-name" style={{ color }}>{toolLabel}</span>
+          {!isOrchestrator && agentName && (
+            <span className="tool-agent-tag" style={{ color, borderColor: `${color}35`, background: `${color}12` }}>
+              {agentDisplayName}
+            </span>
+          )}
+        </div>
+
+        {status === "calling" && <span className="status-badge status-running"><div className="spinner-icon" /> RUNNING</span>}
         {status === "error" && <span className="status-badge status-error">ERROR</span>}
         {status === "done" && hasGraphData && (
           <span className="status-badge" style={{ color: 'var(--accent-purple)', borderColor: 'rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)' }}>

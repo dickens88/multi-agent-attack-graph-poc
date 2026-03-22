@@ -49,17 +49,6 @@ function normalizeTodos(raw: unknown): Todo[] {
   });
 }
 
-/**
- * Convert Python repr text (single quotes, True/False/None) to valid JSON.
- * Only applied to the detected JSON-like substring, not arbitrary prose.
- */
-function fixPythonRepr(s: string): string {
-  return s
-    .replace(/'/g, '"')
-    .replace(/\bTrue\b/g, "true")
-    .replace(/\bFalse\b/g, "false")
-    .replace(/\bNone\b/g, "null");
-}
 
 function tryParseTodos(text: string): Todo[] | null {
   try {
@@ -83,7 +72,7 @@ function parseTodosFromResult(result: string): Todo[] | null {
   const direct = tryParseTodos(text);
   if (direct) return direct;
 
-  // 2. Extract JSON-like substring
+  // 2. Extract JSON-like substring and retry JSON parse
   const start = text.search(/[\[{]/);
   if (start === -1) return null;
   const slice = text.slice(start);
@@ -91,16 +80,7 @@ function parseTodosFromResult(result: string): Todo[] | null {
   if (end === -1) return null;
   const snippet = slice.slice(0, end + 1);
 
-  // 3. Try parsing the extracted substring as JSON
-  const fromSnippet = tryParseTodos(snippet);
-  if (fromSnippet) return fromSnippet;
-
-  // 4. Fallback: convert Python repr format to JSON and retry
-  const fixed = fixPythonRepr(snippet);
-  const fromFixed = tryParseTodos(fixed);
-  if (fromFixed) return fromFixed;
-
-  return null;
+  return tryParseTodos(snippet);
 }
 
 function mergeGraphData(current: GraphData, incoming: GraphData): GraphData {
@@ -175,7 +155,8 @@ function applyEvent(
     case "orchestrator_tool_result": {
       const toolName = String(payload.tool ?? "");
       const resultText = String(payload.result ?? "");
-      const todos = toolName === "write_todos" ? parseTodosFromResult(resultText) : null;
+      const todosFromPayload = payload.todos ? normalizeTodos(payload.todos) : null;
+      const todos = todosFromPayload ?? (toolName === "write_todos" ? parseTodosFromResult(resultText) : null);
 
       let matched = false;
       const updated = [...state.timeline]
@@ -209,9 +190,6 @@ function applyEvent(
       }
       return next;
     }
-
-    case "todos_update":
-      return { ...state, orchestrator_todos: normalizeTodos(payload.todos) };
 
     case "todos_update_realtime": {
       const source = String(payload.source ?? "orchestrator");
@@ -300,7 +278,8 @@ function applyEvent(
       const agentName = String(payload.agent_name ?? "unknown-agent");
       const toolName = String(payload.tool ?? "");
       const resultText = String(payload.result ?? "");
-      const todos = toolName === "write_todos" ? parseTodosFromResult(resultText) : null;
+      const todosFromPayload = payload.todos ? normalizeTodos(payload.todos) : null;
+      const todos = todosFromPayload ?? (toolName === "write_todos" ? parseTodosFromResult(resultText) : null);
 
       let matched = false;
       const updated = [...state.timeline]
@@ -443,13 +422,21 @@ export function useInvestigationStream() {
       }
     }
 
+    abortRef.current = null;
     setState((s) => (s.status === "running" ? { ...s, status: "done" } : s));
+  }, []);
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setState((s) => (s.status === "running" ? { ...s, status: "stopped" } : s));
   }, []);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    abortRef.current = null;
     setState(initialState());
   }, []);
 
-  return { state, submit, reset, AGENT_DISPLAY_NAMES, AGENT_COLORS };
+  return { state, submit, stop, reset, AGENT_DISPLAY_NAMES, AGENT_COLORS };
 }

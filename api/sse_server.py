@@ -74,42 +74,6 @@ _NODE_ICONS = {
 }
 
 
-def _serialize_value(val):
-    """Recursively serialize Neo4j driver objects to plain Python types."""
-    # Neo4j Node
-    if hasattr(val, "labels") and hasattr(val, "items"):
-        d = dict(val.items())
-        d["_labels"] = list(val.labels)
-        return {k: _serialize_value(v) for k, v in d.items()}
-
-    # Neo4j Relationship
-    if hasattr(val, "type") and hasattr(val, "items") and not isinstance(val, dict):
-        d = dict(val.items())
-        d["_type"] = val.type
-        d["_start"] = val.start_node.get("id") or val.start_node.get("ip") or str(val.start_node.id)
-        d["_end"] = val.end_node.get("id") or val.end_node.get("ip") or str(val.end_node.id)
-        return {k: _serialize_value(v) for k, v in d.items()}
-
-    # Neo4j Path
-    if hasattr(val, "nodes") and hasattr(val, "relationships"):
-        return {
-            "nodes": [_serialize_value(n) for n in val.nodes],
-            "relationships": [_serialize_value(r) for r in val.relationships],
-        }
-
-    if isinstance(val, list):
-        return [_serialize_value(v) for v in val]
-
-    if isinstance(val, dict):
-        return {k: _serialize_value(v) for k, v in val.items()}
-
-    try:
-        json.dumps(val)
-        return val
-    except (TypeError, ValueError):
-        return str(val)
-
-
 def _pick_node_id(obj: dict) -> str | None:
     """Derive a stable identifier from a node dict."""
     return obj.get("id") or obj.get("ip") or obj.get("name") or obj.get("value") or obj.get("src_ip")
@@ -219,39 +183,6 @@ def _scan_rows_for_nodes_and_edges(rows: list[dict]) -> tuple[dict[str, dict], l
                 edges.append({"source": src["id"], "target": tgt["id"], "label": "RELATED"})
 
     return nodes_map, edges
-
-
-def _fetch_subgraph_for_ids(node_ids: list[str]) -> tuple[dict[str, dict], list[dict]]:
-    """
-    Given a list of node IDs, query all relationships between/around them.
-    This is the key step that connects isolated nodes.
-    Mirrors the old retriever._maybe_update_graph() subgraph query.
-    """
-    if not node_ids:
-        return {}, []
-
-    from tools.graph_tools import get_driver
-
-    cypher = (
-        "MATCH (a)-[r]->(b) "
-        "WHERE a.id IN $ids OR b.id IN $ids "
-        "   OR a.ip IN $ids OR b.ip IN $ids "
-        "RETURN a, type(r) AS rel_type, r, b "
-        "LIMIT 200"
-    )
-    try:
-        with get_driver().session() as session:
-            result = session.run(cypher, {"ids": node_ids})
-            rows = []
-            for record in result:
-                row = {}
-                for key in record.keys():
-                    row[key] = _serialize_value(record[key])
-                rows.append(row)
-        return _scan_rows_for_nodes_and_edges(rows)
-    except Exception as e:
-        logger.warning("Subgraph fetch failed: %s", e)
-        return {}, []
 
 
 def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
@@ -410,17 +341,6 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
                 if key_ not in edges_set:
                     edges_set.add(key_)
                     edges.append({"source": a, "target": b, "label": rt})
-
-    if nodes_map:
-        sub_nodes, sub_edges = _fetch_subgraph_for_ids(list(nodes_map.keys()))
-        for nid, node in sub_nodes.items():
-            if nid not in nodes_map:
-                nodes_map[nid] = node
-        for e in sub_edges:
-            key_ = (e["source"], e["target"], e["label"])
-            if key_ not in edges_set:
-                edges_set.add(key_)
-                edges.append(e)
 
     if not nodes_map and not edges:
         return None
@@ -674,6 +594,13 @@ async def stream_investigation(user_query: str, thread_id: str):
             if is_subagent:
                 payload["call_id"] = call_id
                 payload["agent_name"] = active_subagents.get(call_id, inferred_agent_name)
+
+            todos_list = None
+            if tool_name == "write_todos":
+                todos_list = _extract_todos_payload(result_str)
+                if todos_list:
+                    payload["todos"] = todos_list
+
             yield _sse(event_type, payload)
 
             if graph_data:
@@ -687,31 +614,21 @@ async def stream_investigation(user_query: str, thread_id: str):
                 )
                 yield _sse("graph_update", {"type": "graph_update", **graph_data})
 
-            if tool_name == "write_todos":
-                todos_list = _extract_todos_payload(result_str)
-                if todos_list:
-                    source_agent = (
-                        active_subagents.get(call_id, "orchestrator")
-                        if is_subagent
-                        else "orchestrator"
-                    )
-                    yield _sse(
-                        "todos_update_realtime",
-                        {
-                            "type": "todos_update_realtime",
-                            "source": source_agent,
-                            "call_id": call_id if is_subagent else None,
-                            "todos": todos_list,
-                        },
-                    )
-                    if not is_subagent:
-                        yield _sse(
-                            "todos_update",
-                            {
-                                "type": "todos_update",
-                                "todos": todos_list,
-                            },
-                        )
+            if tool_name == "write_todos" and todos_list:
+                source_agent = (
+                    active_subagents.get(call_id, "orchestrator")
+                    if is_subagent
+                    else "orchestrator"
+                )
+                yield _sse(
+                    "todos_update_realtime",
+                    {
+                        "type": "todos_update_realtime",
+                        "source": source_agent,
+                        "call_id": call_id if is_subagent else None,
+                        "todos": todos_list,
+                    },
+                )
 
         if token.type == "ai" and token.content:
             event_type = "subagent_token" if is_subagent else "orchestrator_token"

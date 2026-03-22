@@ -3,9 +3,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
 
 from agent_logging import truncate_text
+from llm_factory import build_chat_model
 from logging_config import get_logger
 
 load_dotenv()
@@ -24,19 +24,8 @@ def nlp_to_cypher(natural_language_query: str, schema_hint: str = "") -> str:
         natural_language_query: The user's question in plain language.
         schema_hint: Optional extra schema context to improve translation.
     """
-    base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-    api_key = os.getenv("OPENAI_API_KEY")
     model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required in .env")
-
-    llm = ChatOpenAI(
-        model=model_name,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=0,
-    )
+    llm = build_chat_model(model_name=model_name, temperature=0)
 
     schema = schema_hint or """
     Nodes: (IP {ip, hostname, risk_score, first_seen}),
@@ -85,7 +74,13 @@ def evaluate_termination(
     """
     _ = paths
 
-    if iteration >= 5:
+    max_iterations_raw = os.getenv("MAX_ITERATIONS", "8")
+    try:
+        max_iterations = int(max_iterations_raw)
+    except ValueError:
+        max_iterations = 8
+
+    if iteration >= max_iterations:
         return {"should_stop": True, "reason": "STOP-3", "confidence": "depends"}
 
     if attacker_found:
