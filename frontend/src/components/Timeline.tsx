@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { TimelineEntry, GraphData } from "../types/stream-events";
 import { AGENT_DISPLAY_NAMES, AGENT_COLORS } from "../hooks/useInvestigationStream";
 
@@ -98,12 +98,6 @@ function InspectorJsonView({ data }: { data: ParsedPayload }) {
 // ============================================================================
 
 export function Timeline({ entries }: Props) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [entries]);
-
   if (entries.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-[13px] text-[#64748B]">
@@ -117,7 +111,6 @@ export function Timeline({ entries }: Props) {
       {entries.map((entry) => (
         <TimelineItem key={entry.id} entry={entry} />
       ))}
-      <div ref={bottomRef} />
     </div>
   );
 }
@@ -168,10 +161,10 @@ function OrchestratorThinking({ content }: { content: string }) {
 function SubagentLifecycle({ agentName, status, taskDesc }: { agentName: string; status: string; taskDesc: string }) {
   const color = AGENT_COLORS[agentName] ?? "#00E5FF";
   const displayName = AGENT_DISPLAY_NAMES[agentName] ?? agentName;
-  
+
   const icon = status === "start" ? "▶" : status === "complete" ? "✓" : "✗";
   const label = status === "start" ? "INITIATED" : status === "complete" ? "COMPLETED" : "FAILED";
-  
+
   return (
     <div className="timeline-row timeline-row-indented">
       <div className="timeline-dot" style={{ borderColor: color, background: color }} />
@@ -226,7 +219,7 @@ function ToolRow({ tool, args, reasoning, result, graphData, status, isOrchestra
   return (
     <div className={`timeline-row ${isOrchestrator ? "" : "timeline-row-indented"}`}>
       <div className="timeline-dot" style={{ borderColor: 'var(--text-muted)', width: 6, height: 6, left: isOrchestrator ? -2 : 13, background: 'var(--text-muted)' }} />
-      
+
       <button className="tool-expand-btn" onClick={() => setOpen(!open)}>
         <span>{TOOL_ICONS[tool] ?? "🔧"}</span>
         <div className="tool-head">
@@ -238,7 +231,7 @@ function ToolRow({ tool, args, reasoning, result, graphData, status, isOrchestra
           )}
         </div>
 
-        {status === "calling" && <span className="status-badge status-running"><div className="spinner-icon" /> RUNNING</span>}
+        {status === "calling" && <span className="status-badge status-running">RUNNING</span>}
         {status === "error" && <span className="status-badge status-error">ERROR</span>}
         {status === "done" && hasGraphData && (
           <span className="status-badge" style={{ color: 'var(--accent-purple)', borderColor: 'rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)' }}>
@@ -306,8 +299,8 @@ function SubagentResult({ agentName, result }: { agentName: string; result: stri
         </div>
         <div className="card-content" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           {open ? (
-             <div style={{ marginTop: 8 }}>
-             {(() => {
+            <div style={{ marginTop: 8 }}>
+              {(() => {
                 const text = result.trim();
                 let parsed = null;
                 try {
@@ -321,7 +314,7 @@ function SubagentResult({ agentName, result }: { agentName: string; result: stri
                   <pre className="json-raw-pre">{formatRawJsonText(result)}</pre>
                 );
               })()}
-             </div>
+            </div>
           ) : (
             <span>{preview}{result.length > 100 ? "..." : ""}</span>
           )}

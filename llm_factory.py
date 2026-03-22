@@ -7,23 +7,13 @@ def build_chat_model(model_name: str | None = None, temperature: float | None = 
     """Build OpenAI-compatible chat model from environment settings."""
     base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
     api_key = os.getenv("OPENAI_API_KEY")
-    resolved_model = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required in .env")
-
-    if temperature is None:
-        temp_raw = os.getenv("OPENAI_TEMPERATURE", "0")
-        try:
-            resolved_temperature = float(temp_raw)
-        except ValueError:
-            resolved_temperature = 0.0
-    else:
-        resolved_temperature = float(temperature)
+    model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    temperature = int(os.getenv("OPENAI_TEMPERATURE", "0"))
 
     return ChatOpenAI(
-        model=resolved_model,
+        model=model_name,
         base_url=base_url,
         api_key=api_key,
-        temperature=resolved_temperature,
+        temperature=temperature,
+        extra_body={"thinking": {"type": "disabled"}},
     )

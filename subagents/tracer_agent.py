@@ -153,7 +153,9 @@ run_cypher_query(
 - CONTINUE: 仍有未探索的关键实体
 """
 
-TRACER_SYSTEM_PROMPT = TRACER_SYSTEM_PROMPT_TEMPLATE.format(max_iterations=MAX_ITERATIONS)
+TRACER_SYSTEM_PROMPT = TRACER_SYSTEM_PROMPT_TEMPLATE.replace(
+    "{max_iterations}", str(MAX_ITERATIONS)
+)
 
 tracer_agent = {
     "name": "tracer-agent",
