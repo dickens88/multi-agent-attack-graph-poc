@@ -160,19 +160,12 @@ function applyEvent(
     case "orchestrator_tool_call": {
       const reasoning = payload.reasoning ? String(payload.reasoning) : "";
       const newEntries: TimelineEntry[] = [];
-      if (reasoning) {
-        newEntries.push({
-          kind: "orchestrator_thinking",
-          id: nextId(),
-          content: reasoning,
-          ts: now,
-        });
-      }
       newEntries.push({
         kind: "orchestrator_tool",
         id: nextId(),
         tool: String(payload.tool ?? ""),
         args: (payload.args as Record<string, unknown>) ?? {},
+        reasoning,
         status: "calling",
         ts: now,
       });
@@ -288,16 +281,6 @@ function applyEvent(
       const agentName = String(payload.agent_name ?? "unknown-agent");
       const reasoning = payload.reasoning ? String(payload.reasoning) : "";
       const newEntries: TimelineEntry[] = [];
-      if (reasoning) {
-        newEntries.push({
-          kind: "subagent_thinking",
-          id: nextId(),
-          call_id: callId,
-          agent_name: agentName,
-          content: reasoning,
-          ts: now,
-        });
-      }
       newEntries.push({
         kind: "subagent_tool",
         id: nextId(),
@@ -305,6 +288,7 @@ function applyEvent(
         agent_name: agentName,
         tool: String(payload.tool ?? ""),
         args: (payload.args as Record<string, unknown>) ?? {},
+        reasoning,
         status: "calling",
         ts: now,
       });

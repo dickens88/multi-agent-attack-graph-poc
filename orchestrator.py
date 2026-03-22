@@ -68,6 +68,11 @@ ORCHESTRATOR_PROMPT = """
 - 不自行执行多跳 Cypher 查询（委派给专用 Agent）
 - LEVEL-3 调查结束后必须委派 report-agent 产出最终结论
 - 不自行编写完整报告内容（委派给 report-agent）
+
+## 工具调用推理要求
+
+每次调用工具（get_node_by_id、get_node_neighbors、run_cypher_query）时，
+必须填写 reason 参数，用中文简要说明为何调用此工具、期望得到什么。
 """
 
 

@@ -120,13 +120,13 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
     case "orchestrator_thinking":
       return <OrchestratorThinking content={entry.content} />;
     case "orchestrator_tool":
-      return <ToolRow isOrchestrator tool={entry.tool} args={entry.args} result={entry.result} graphData={entry.graph_data} status={entry.status} />;
+      return <ToolRow isOrchestrator tool={entry.tool} args={entry.args} reasoning={entry.reasoning} result={entry.result} graphData={entry.graph_data} status={entry.status} />;
     case "subagent_lifecycle":
       return <SubagentLifecycle agentName={entry.agent_name} status={entry.status} taskDesc={entry.task_description} />;
     case "subagent_thinking":
       return <SubagentThinking agentName={entry.agent_name} content={entry.content} />;
     case "subagent_tool":
-      return <ToolRow agentName={entry.agent_name} tool={entry.tool} args={entry.args} result={entry.result} graphData={entry.graph_data} status={entry.status} />;
+      return <ToolRow agentName={entry.agent_name} tool={entry.tool} args={entry.args} reasoning={entry.reasoning} result={entry.result} graphData={entry.graph_data} status={entry.status} />;
     case "subagent_result":
       return <SubagentResult agentName={entry.agent_name} result={entry.result} />;
     default:
@@ -205,11 +205,12 @@ const TOOL_ICONS: Record<string, string> = {
   write_todos: "📋", task: "📤",
 };
 
-function ToolRow({ tool, args, result, graphData, status, isOrchestrator, agentName }: any) {
+function ToolRow({ tool, args, reasoning, result, graphData, status, isOrchestrator, agentName }: any) {
   const [open, setOpen] = useState(false);
   const color = isOrchestrator ? "var(--accent-blue)" : (AGENT_COLORS[agentName ?? ""] ?? "var(--accent-cyan)");
   const argsStr = Object.keys(args).length > 0 ? JSON.stringify(args) : "";
   const hasGraphData = !!graphData && (graphData.nodes.length > 0 || graphData.edges.length > 0);
+  const reasoningText = typeof reasoning === "string" ? reasoning.trim() : "";
 
   return (
     <div className={`timeline-row ${isOrchestrator ? "" : "timeline-row-indented"}`}>
@@ -231,6 +232,12 @@ function ToolRow({ tool, args, result, graphData, status, isOrchestrator, agentN
 
       {open && (
         <div className="tool-details">
+          {reasoningText && (
+            <div className="tool-reasoning">
+              <div className="tool-reasoning-label">REASON</div>
+              <div className="tool-reasoning-text">{reasoningText}</div>
+            </div>
+          )}
           {argsStr && (
             <div>
               <div className="detail-section-label">PAYLOAD_ARGS</div>

@@ -466,6 +466,32 @@ body {
   font-weight: 600;
 }
 
+.tool-reasoning {
+  position: relative;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.10), rgba(99, 102, 241, 0.06));
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.tool-reasoning-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: #93C5FD;
+  margin-bottom: 6px;
+}
+
+.tool-reasoning-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #DBEAFE;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ========================================================================= */
 /* JSON VIEWER (Inspector Style) */
 /* ========================================================================= */

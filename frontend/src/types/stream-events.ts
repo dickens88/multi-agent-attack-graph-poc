@@ -43,10 +43,10 @@ export interface Todo {
 
 export type TimelineEntry =
   | { kind: "orchestrator_thinking"; id: string; content: string; ts: number }
-  | { kind: "orchestrator_tool"; id: string; tool: string; args: Record<string, unknown>; result?: string; graph_data?: GraphData | null; status: "calling" | "done" | "error"; ts: number }
+  | { kind: "orchestrator_tool"; id: string; tool: string; args: Record<string, unknown>; reasoning?: string; result?: string; graph_data?: GraphData | null; status: "calling" | "done" | "error"; ts: number }
   | { kind: "subagent_lifecycle"; id: string; call_id: string; agent_name: string; status: "start" | "running" | "complete" | "error"; task_description: string; ts: number }
   | { kind: "subagent_thinking"; id: string; call_id: string; agent_name: string; content: string; ts: number }
-  | { kind: "subagent_tool"; id: string; call_id: string; agent_name: string; tool: string; args: Record<string, unknown>; result?: string; graph_data?: GraphData | null; status: "calling" | "done" | "error"; ts: number }
+  | { kind: "subagent_tool"; id: string; call_id: string; agent_name: string; tool: string; args: Record<string, unknown>; reasoning?: string; result?: string; graph_data?: GraphData | null; status: "calling" | "done" | "error"; ts: number }
   | { kind: "subagent_result"; id: string; call_id: string; agent_name: string; result: string; ts: number };
 
 export interface AgentTodos {

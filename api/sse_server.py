@@ -555,8 +555,6 @@ async def stream_investigation(user_query: str, thread_id: str):
     pending_tool_calls: dict[str, dict] = {}
     logged_tool_chunk_ids: set[str] = set()
     synthetic_counter = 0
-    # Per-call_id reasoning accumulator: captures AI text between tool calls
-    reasoning_buf: dict[str, str] = {}
 
     async for chunk in orchestrator.astream(
         {"messages": [{"role": "user", "content": user_query}]},
@@ -632,16 +630,13 @@ async def stream_investigation(user_query: str, thread_id: str):
                     }
                     if is_subagent:
                         payload["call_id"] = call_id
-                        # Attach accumulated reasoning text to the tool call
-                        buf_key = call_id or "orchestrator"
-                        if buf_key in reasoning_buf and reasoning_buf[buf_key].strip():
-                            payload["reasoning"] = reasoning_buf[buf_key].strip()
-                            reasoning_buf[buf_key] = ""
-                    else:
-                        buf_key = "orchestrator"
-                        if buf_key in reasoning_buf and reasoning_buf[buf_key].strip():
-                            payload["reasoning"] = reasoning_buf[buf_key].strip()
-                            reasoning_buf[buf_key] = ""
+                        payload["agent_name"] = active_subagents.get(call_id, inferred_agent_name)
+
+                    if isinstance(parsed_args, dict) and "reason" in parsed_args:
+                        reason_text = parsed_args.pop("reason", "")
+                        if reason_text:
+                            payload["reasoning"] = str(reason_text)
+
                     yield _sse(event_type, payload)
 
         elif token.type == "tool":
@@ -719,11 +714,6 @@ async def stream_investigation(user_query: str, thread_id: str):
                         )
 
         if token.type == "ai" and token.content:
-            # Accumulate reasoning text for association with next tool call
-            buf_key = (call_id if is_subagent and call_id else "orchestrator")
-            reasoning_buf.setdefault(buf_key, "")
-            reasoning_buf[buf_key] += str(token.content)
-
             event_type = "subagent_token" if is_subagent else "orchestrator_token"
             payload = {"type": event_type, "content": token.content}
             if is_subagent:

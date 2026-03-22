@@ -63,6 +63,14 @@ NL2CYPHER_SYSTEM_PROMPT = """
 - 只生成 READ 查询（MATCH/RETURN），不生成 CREATE/DELETE/SET
 - 所有查询必须包含 LIMIT（最大 100）
 - 不自行推测未知的节点标签或关系类型，先查询 graph-schema skill
+
+## 工具调用推理要求
+
+每次调用工具时必须填写 reason 参数，用中文说明：
+- 为什么需要这次查询
+- 期望得到什么结果
+
+不得省略 reason 参数或填写空字符串。
 """
 
 nl2cypher_agent = {

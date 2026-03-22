@@ -80,7 +80,7 @@ def _run(query: str, params: dict) -> list[dict]:
 
 # ── Public tools ────────────────────────────────────────────────────────────
 
-def get_node_by_id(node_id: str, label: str = "") -> str:
+def get_node_by_id(node_id: str, reason: str = "", label: str = "") -> str:
     """Look up any graph entity by its id and return its full properties plus
     all directly connected neighbors and relationships.
 
@@ -94,6 +94,11 @@ def get_node_by_id(node_id: str, label: str = "") -> str:
 
     Args:
         node_id: The entity's id value, name, username, or IP address.
+        reason:  Required. Explain in Chinese WHY you are calling this tool:
+                 what clue led you here, what node type you expect, and what
+                 you hope to learn from the result.
+                 Example: "DC01触发了RDP暴力破解告警，查询其邻居以确认
+                 是否有账号被成功利用，重点关注关联的User和Alert节点。"
         label:   Optional node label to narrow the search (e.g. 'Host', 'User').
                  Leave empty to search across all labels.
 
@@ -141,7 +146,7 @@ def get_node_by_id(node_id: str, label: str = "") -> str:
     })
 
 
-def get_node_neighbors(node_id: str, depth: int = 1, limit: int = 50) -> str:
+def get_node_neighbors(node_id: str, reason: str = "", depth: int = 1, limit: int = 50) -> str:
     """Get all entities connected to a node within the given hop depth.
 
     Matches by id, ip, name, or username — no need to know the node label.
@@ -149,6 +154,9 @@ def get_node_neighbors(node_id: str, depth: int = 1, limit: int = 50) -> str:
 
     Args:
         node_id: The entity's id, ip, name, or username.
+        reason:  Required. Explain in Chinese why you are expanding this node:
+                 what you already know about it and what relationships you
+                 expect to find.
         depth:   How many hops to expand (1–3 recommended, max 5).
         limit:   Max neighbors to return (default 50).
 
@@ -166,7 +174,7 @@ def get_node_neighbors(node_id: str, depth: int = 1, limit: int = 50) -> str:
     return json.dumps({"node_id": node_id, "depth": depth, "neighbors": rows})
 
 
-def trace_attack_path(node_id: str, max_hops: int = 6) -> str:
+def trace_attack_path(node_id: str, reason: str = "", max_hops: int = 6) -> str:
     """Trace attack propagation and lateral movement paths from a starting entity.
 
     Follows CONNECTED_TO, SPAWNED, EXECUTED, INITIATED, ESTABLISHED, TRIGGERED,
@@ -174,8 +182,11 @@ def trace_attack_path(node_id: str, max_hops: int = 6) -> str:
     Works with any entity type — Host, User, Process, Network_Connection, etc.
 
     Args:
-        node_id: The starting entity's id, ip, name, or username.
-        max_hops: Maximum relationship hops to traverse (default 6).
+        node_id:   The starting entity's id, ip, name, or username.
+        reason:    Required. Explain in Chinese what attack pattern you are
+                   tracing, why this node is the starting point, and what
+                   path you expect to find.
+        max_hops:  Maximum relationship hops to traverse (default 6).
 
     Returns JSON: {node_id, paths_found, paths: [{nodes, relationships, length}]}
     """
@@ -208,12 +219,19 @@ def trace_attack_path(node_id: str, max_hops: int = 6) -> str:
     })
 
 
-def run_cypher_query(query: str, params: Optional[dict] = None) -> str:
+def run_cypher_query(query: str, reason: str = "", params: Optional[dict] = None) -> str:
     """Execute a read-only Cypher query and return fully serialized results.
 
     Node objects in the result include _labels and all properties.
     Relationship objects include _type, _start, _end and all properties.
     Use this for any query that cannot be expressed with the other tools.
+
+    Args:
+        query:   The Cypher query string.
+        reason:  Required. Explain in Chinese what information you need,
+                 why the other tools are insufficient, and what result
+                 you expect from this query.
+        params:  Optional parameter dict for the query.
 
     Rules: only MATCH/RETURN queries; always include LIMIT; max 100 rows.
 
