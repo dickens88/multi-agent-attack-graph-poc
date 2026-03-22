@@ -49,8 +49,19 @@ function normalizeTodos(raw: unknown): Todo[] {
   });
 }
 
-function parseTodosFromResult(result: string): Todo[] | null {
-  const text = result.trim();
+/**
+ * Convert Python repr text (single quotes, True/False/None) to valid JSON.
+ * Only applied to the detected JSON-like substring, not arbitrary prose.
+ */
+function fixPythonRepr(s: string): string {
+  return s
+    .replace(/'/g, '"')
+    .replace(/\bTrue\b/g, "true")
+    .replace(/\bFalse\b/g, "false")
+    .replace(/\bNone\b/g, "null");
+}
+
+function tryParseTodos(text: string): Todo[] | null {
   try {
     const p = JSON.parse(text);
     if (Array.isArray(p)) return normalizeTodos(p);
@@ -62,22 +73,32 @@ function parseTodosFromResult(result: string): Todo[] | null {
   } catch {
     // ignore
   }
+  return null;
+}
 
+function parseTodosFromResult(result: string): Todo[] | null {
+  const text = result.trim();
+
+  // 1. Try direct JSON parse
+  const direct = tryParseTodos(text);
+  if (direct) return direct;
+
+  // 2. Extract JSON-like substring
   const start = text.search(/[\[{]/);
   if (start === -1) return null;
   const slice = text.slice(start);
   const end = Math.max(slice.lastIndexOf("]"), slice.lastIndexOf("}"));
   if (end === -1) return null;
+  const snippet = slice.slice(0, end + 1);
 
-  try {
-    const p = JSON.parse(slice.slice(0, end + 1)) as
-      | Record<string, unknown>
-      | unknown[];
-    if (Array.isArray(p)) return normalizeTodos(p);
-    if (p?.todos) return normalizeTodos(p.todos as unknown[]);
-  } catch {
-    // ignore
-  }
+  // 3. Try parsing the extracted substring as JSON
+  const fromSnippet = tryParseTodos(snippet);
+  if (fromSnippet) return fromSnippet;
+
+  // 4. Fallback: convert Python repr format to JSON and retry
+  const fixed = fixPythonRepr(snippet);
+  const fromFixed = tryParseTodos(fixed);
+  if (fromFixed) return fromFixed;
 
   return null;
 }
@@ -137,15 +158,25 @@ function applyEvent(
     }
 
     case "orchestrator_tool_call": {
-      const entry: TimelineEntry = {
+      const reasoning = payload.reasoning ? String(payload.reasoning) : "";
+      const newEntries: TimelineEntry[] = [];
+      if (reasoning) {
+        newEntries.push({
+          kind: "orchestrator_thinking",
+          id: nextId(),
+          content: reasoning,
+          ts: now,
+        });
+      }
+      newEntries.push({
         kind: "orchestrator_tool",
         id: nextId(),
         tool: String(payload.tool ?? ""),
         args: (payload.args as Record<string, unknown>) ?? {},
         status: "calling",
         ts: now,
-      };
-      return { ...state, timeline: [...state.timeline, entry] };
+      });
+      return { ...state, timeline: [...state.timeline, ...newEntries] };
     }
 
     case "orchestrator_tool_result": {
@@ -255,7 +286,19 @@ function applyEvent(
     case "subagent_tool_call": {
       const callId = String(payload.call_id ?? "");
       const agentName = String(payload.agent_name ?? "unknown-agent");
-      const entry: TimelineEntry = {
+      const reasoning = payload.reasoning ? String(payload.reasoning) : "";
+      const newEntries: TimelineEntry[] = [];
+      if (reasoning) {
+        newEntries.push({
+          kind: "subagent_thinking",
+          id: nextId(),
+          call_id: callId,
+          agent_name: agentName,
+          content: reasoning,
+          ts: now,
+        });
+      }
+      newEntries.push({
         kind: "subagent_tool",
         id: nextId(),
         call_id: callId,
@@ -264,8 +307,8 @@ function applyEvent(
         args: (payload.args as Record<string, unknown>) ?? {},
         status: "calling",
         ts: now,
-      };
-      return { ...state, timeline: [...state.timeline, entry] };
+      });
+      return { ...state, timeline: [...state.timeline, ...newEntries] };
     }
 
     case "subagent_tool_result": {

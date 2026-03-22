@@ -1,50 +1,17 @@
-import os
 import json
 import logging
+import os
+import time
 from typing import Optional
-from neo4j import GraphDatabase
+
 from dotenv import load_dotenv
+from neo4j import GraphDatabase
 
-# DBMS 通知（如「某属性键不存在」）由驱动写入 logger `neo4j.notifications`，默认打到 WARNING，易刷屏。
-logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
-
-
-def _serialize_value(val):
-    """Recursively serialize Neo4j driver objects to plain Python types."""
-    # Neo4j Node
-    if hasattr(val, "labels") and hasattr(val, "items"):
-        d = dict(val.items())
-        d["_labels"] = list(val.labels)
-        return {k: _serialize_value(v) for k, v in d.items()}
-
-    # Neo4j Relationship
-    if hasattr(val, "type") and hasattr(val, "items") and not isinstance(val, dict):
-        d = dict(val.items())
-        d["_type"] = val.type
-        d["_start"] = val.start_node.get("id") or val.start_node.get("ip") or str(val.start_node.id)
-        d["_end"] = val.end_node.get("id") or val.end_node.get("ip") or str(val.end_node.id)
-        return {k: _serialize_value(v) for k, v in d.items()}
-
-    # Neo4j Path
-    if hasattr(val, "nodes") and hasattr(val, "relationships"):
-        return {
-            "nodes": [_serialize_value(n) for n in val.nodes],
-            "relationships": [_serialize_value(r) for r in val.relationships],
-        }
-
-    if isinstance(val, list):
-        return [_serialize_value(v) for v in val]
-
-    if isinstance(val, dict):
-        return {k: _serialize_value(v) for k, v in val.items()}
-
-    try:
-        json.dumps(val)
-        return val
-    except (TypeError, ValueError):
-        return str(val)
+from logging_config import get_logger
 
 load_dotenv()
+
+log = get_logger("lab.tools.graph")
 
 _driver = None
 
@@ -59,245 +26,270 @@ def get_driver():
     return _driver
 
 
-def get_node_by_ip(ip: str) -> str:
-    """Look up a single IP node and return its full properties and labels."""
-    query = "MATCH (n {ip: $ip}) RETURN n LIMIT 1"
+def _serialize_value(val):
+    """Recursively serialize Neo4j driver objects to plain Python types."""
+    if hasattr(val, "labels") and hasattr(val, "items"):  # Node
+        d = {k: _serialize_value(v) for k, v in dict(val.items()).items()}
+        d["_labels"] = list(val.labels)
+        return d
+    if hasattr(val, "type") and hasattr(val, "items") and not isinstance(val, dict):  # Relationship
+        d = {k: _serialize_value(v) for k, v in dict(val.items()).items()}
+        d["_type"] = val.type
+        try:
+            d["_start"] = (val.start_node.get("id") or val.start_node.get("ip")
+                           or str(val.start_node.id))
+            d["_end"] = (val.end_node.get("id") or val.end_node.get("ip")
+                         or str(val.end_node.id))
+        except Exception:
+            pass
+        return d
+    if hasattr(val, "nodes") and hasattr(val, "relationships"):  # Path
+        return {
+            "nodes": [_serialize_value(n) for n in val.nodes],
+            "relationships": [_serialize_value(r) for r in val.relationships],
+        }
+    if isinstance(val, list):
+        return [_serialize_value(v) for v in val]
+    if isinstance(val, dict):
+        return {k: _serialize_value(v) for k, v in val.items()}
+    try:
+        json.dumps(val)
+        return val
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def _run(query: str, params: dict) -> list[dict]:
+    """Execute a query and return fully serialized rows."""
+    log.debug(
+        "cypher_execute preview=%s param_keys=%s",
+        query[:500] + ("…" if len(query) > 500 else ""),
+        list(params.keys()),
+    )
+    t0 = time.perf_counter()
     with get_driver().session() as session:
-        result = session.run(query, {"ip": ip})
-        records = [_serialize_value(r["n"]) for r in result]
-        if not records:
-            return json.dumps({"found": False, "ip": ip})
-        return json.dumps({"found": True, "node": records[0]})
+        result = session.run(query, params)
+        rows = [
+            {key: _serialize_value(record[key]) for key in record.keys()}
+            for record in result
+        ]
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    log.info("cypher_done rows=%s elapsed_ms=%.2f", len(rows), elapsed_ms)
+    return rows
 
 
-def get_node_with_context(ip: str) -> str:
-    """Query an IP node and fetch all direct neighbors and relationships.
+# ── Public tools ────────────────────────────────────────────────────────────
 
-    Returns JSON with: {found, node, neighbors, edges}
+def get_node_by_id(node_id: str, label: str = "") -> str:
+    """Look up any graph entity by its id and return its full properties plus
+    all directly connected neighbors and relationships.
+
+    This is the primary lookup tool. Use it for any entity type:
+    Host (id = hostname e.g. 'DC01'), User (id = username e.g. 'u_jchen'),
+    Process (e.g. 'proc_payload_01'), Alert, IOC, File, Email,
+    Network_Connection, MITRE_Technique, Vulnerability.
+
+    For Host nodes you may also pass an IP address — the query will match on
+    both the id and ip properties.
+
+    Args:
+        node_id: The entity's id value, name, username, or IP address.
+        label:   Optional node label to narrow the search (e.g. 'Host', 'User').
+                 Leave empty to search across all labels.
+
+    Returns JSON: {found, node_type, node, neighbors: [{id, type, label, rel_type, rel_props}]}
     """
-    query = """
-    MATCH (n:IP {ip: $ip})
-    OPTIONAL MATCH (n)-[r]-(neighbor)
+    label_clause = f":{label}" if label else ""
+
+    # Try id first, then ip, then name/username as fallback
+    query = f"""
+    MATCH (n{label_clause})
+    WHERE n.id = $val OR n.ip = $val OR n.name = $val OR n.username = $val
+    WITH n LIMIT 1
+    OPTIONAL MATCH (n)-[r]-(m)
+    RETURN n, labels(n) AS lbls,
+           collect({{
+               neighbor_id:   coalesce(m.id, m.ip, m.name, m.value, ''),
+               neighbor_type: labels(m)[0],
+               neighbor_props: m,
+               rel_type:      type(r),
+               rel_direction: CASE WHEN startNode(r) = n THEN 'out' ELSE 'in' END,
+               rel_props:     r
+           }}) AS neighbors
+    """
+    rows = _run(query, {"val": node_id})
+
+    if not rows or rows[0].get("n") is None:
+        return json.dumps({"found": False, "node_id": node_id})
+
+    row = rows[0]
+    node_obj = row["n"]
+    lbls = row.get("lbls") or []
+    node_type = lbls[0] if lbls else "Unknown"
+
+    # Clean up neighbor list: remove nulls from OPTIONAL MATCH with no match
+    neighbors = [
+        nb for nb in (row.get("neighbors") or [])
+        if nb.get("neighbor_id") or nb.get("rel_type")
+    ]
+
+    return json.dumps({
+        "found": True,
+        "node_type": node_type,
+        "node": node_obj,
+        "neighbors": neighbors,
+    })
+
+
+def get_node_neighbors(node_id: str, depth: int = 1, limit: int = 50) -> str:
+    """Get all entities connected to a node within the given hop depth.
+
+    Matches by id, ip, name, or username — no need to know the node label.
+    Returns full node objects for all neighbors so the graph panel can render them.
+
+    Args:
+        node_id: The entity's id, ip, name, or username.
+        depth:   How many hops to expand (1–3 recommended, max 5).
+        limit:   Max neighbors to return (default 50).
+
+    Returns JSON: {node_id, depth, neighbors: [{n, rel_type, m}]}
+    """
+    query = f"""
+    MATCH (n)
+    WHERE n.id = $val OR n.ip = $val OR n.name = $val OR n.username = $val
+    WITH n LIMIT 1
+    MATCH (n)-[r*1..{depth}]-(m)
+    RETURN n, type(r[-1]) AS rel_type, r[-1] AS rel, m
+    LIMIT {limit}
+    """
+    rows = _run(query, {"val": node_id})
+    return json.dumps({"node_id": node_id, "depth": depth, "neighbors": rows})
+
+
+def trace_attack_path(node_id: str, max_hops: int = 6) -> str:
+    """Trace attack propagation and lateral movement paths from a starting entity.
+
+    Follows CONNECTED_TO, SPAWNED, EXECUTED, INITIATED, ESTABLISHED, TRIGGERED,
+    MATCHES_IOC, HAS_VULNERABILITY, DELIVERS_TO, RUNS_ON relationships.
+    Works with any entity type — Host, User, Process, Network_Connection, etc.
+
+    Args:
+        node_id: The starting entity's id, ip, name, or username.
+        max_hops: Maximum relationship hops to traverse (default 6).
+
+    Returns JSON: {node_id, paths_found, paths: [{nodes, relationships, length}]}
+    """
+    query = f"""
+    MATCH (src)
+    WHERE src.id = $val OR src.ip = $val OR src.name = $val OR src.username = $val
+    WITH src LIMIT 1
+    MATCH path = (src)-[*1..{max_hops}]-(target)
+    WHERE target <> src
     RETURN
-        n,
-        collect(DISTINCT {
-            neighbor_ip: neighbor.ip,
-            neighbor_hostname: neighbor.hostname,
-            neighbor_risk_score: neighbor.risk_score,
-            neighbor_type: labels(neighbor)[0],
-            rel_type: type(r),
-            rel_direction: CASE WHEN startNode(r) = n THEN 'out' ELSE 'in' END,
-            timestamp: r.timestamp,
-            method: r.method
-        }) as neighbors
-    LIMIT 1
+        [n IN nodes(path) | {{
+            id:    coalesce(n.id, n.ip, n.name, ''),
+            type:  labels(n)[0],
+            props: n
+        }}] AS path_nodes,
+        [r IN relationships(path) | {{
+            type:  type(r),
+            props: r
+        }}] AS path_rels,
+        length(path) AS hops
+    ORDER BY hops ASC
+    LIMIT 20
     """
-    with get_driver().session() as session:
-        result = session.run(query, {"ip": ip})
-        records = list(result)
-        if not records or records[0]["n"] is None:
-            return json.dumps({"found": False, "ip": ip})
-
-        record = records[0]
-        node_data = dict(record["n"])
-        raw_neighbors = record["neighbors"] or []
-        neighbors = [n for n in raw_neighbors if n.get("neighbor_ip")]
-
-        edges = []
-        for nb in neighbors:
-            if nb.get("rel_direction") == "out":
-                edges.append(
-                    {
-                        "source": ip,
-                        "target": nb["neighbor_ip"],
-                        "label": nb.get("rel_type", ""),
-                    }
-                )
-            else:
-                edges.append(
-                    {
-                        "source": nb["neighbor_ip"],
-                        "target": ip,
-                        "label": nb.get("rel_type", ""),
-                    }
-                )
-
-        return json.dumps(
-            {
-                "found": True,
-                "node": node_data,
-                "neighbors": neighbors,
-                "edges": edges,
-            }
-        )
+    rows = _run(query, {"val": node_id})
+    return json.dumps({
+        "node_id": node_id,
+        "max_hops": max_hops,
+        "paths_found": len(rows),
+        "paths": rows,
+    })
 
 
 def run_cypher_query(query: str, params: Optional[dict] = None) -> str:
-    """Execute a Cypher query against the attack graph database.
+    """Execute a read-only Cypher query and return fully serialized results.
 
-    Use for: any direct Cypher execution after query has been composed.
-    The query must be a valid Cypher string.
+    Node objects in the result include _labels and all properties.
+    Relationship objects include _type, _start, _end and all properties.
+    Use this for any query that cannot be expressed with the other tools.
 
-    Returns JSON with full node objects (including _labels and all properties),
-    relationship objects (including _type), and scalar values.
-    Max 100 rows returned by default (add LIMIT in query to override).
+    Rules: only MATCH/RETURN queries; always include LIMIT; max 100 rows.
+
+    Returns JSON: {status, rows, count} or {status, error, query}
     """
     if params is None:
         params = {}
     try:
-        with get_driver().session() as session:
-            result = session.run(query, params)
-            rows = []
-            for record in result:
-                row = {}
-                for key in record.keys():
-                    row[key] = _serialize_value(record[key])
-                rows.append(row)
-            return json.dumps({"status": "success", "rows": rows, "count": len(rows)})
+        rows = _run(query, params)
+        return json.dumps({"status": "success", "rows": rows, "count": len(rows)})
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e), "query": query})
 
 
-def get_node_neighbors(ip: str, depth: int = 1, limit: int = 50) -> str:
-    """Get neighboring nodes of an IP up to specified depth.
+def get_live_schema() -> str:
+    """Query Neo4j for the current graph schema.
 
-    Use for: understanding direct connections, initial recon before deep tracing.
-    Do NOT use for: full attack chain reconstruction (use trace_attack_path instead).
-
-    Args:
-        ip: The IP address of the source node.
-        depth: How many hops to expand (1-3 recommended).
-        limit: Max neighbors to return.
-
-    Returns JSON with neighbors and relationship types.
+    Returns a human-readable string covering all node labels with their
+    properties, all relationship types with their properties, and the
+    relationship patterns showing which node types connect to which.
+    This is the authoritative schema source — always prefer it over any
+    static schema file.
     """
-    query = f"""
-    MATCH (n:IP {{ip: $ip}})-[r*1..{depth}]-(neighbor)
-    RETURN
-        type(r[-1]) as rel_type,
-        neighbor.ip as neighbor_ip,
-        neighbor.hostname as neighbor_hostname,
-        neighbor.risk_score as risk_score,
-        r[-1].timestamp as timestamp
-    LIMIT {limit}
-    """
-    with get_driver().session() as session:
-        result = session.run(query, {"ip": ip})
-        rows = [dict(r) for r in result]
-        return json.dumps({"ip": ip, "depth": depth, "neighbors": rows})
+    try:
+        with get_driver().session() as session:
+            node_rows = session.run(
+                "CALL db.schema.nodeTypeProperties() "
+                "YIELD nodeType, propertyName, propertyTypes "
+                "RETURN nodeType, collect({name: propertyName, types: propertyTypes}) AS properties"
+            ).data()
 
+            rel_rows = session.run(
+                "CALL db.schema.relTypeProperties() "
+                "YIELD relType, propertyName, propertyTypes "
+                "RETURN relType, collect({name: propertyName, types: propertyTypes}) AS properties"
+            ).data()
 
-def trace_attack_path(source_ip: str, max_hops: int = 5) -> str:
-    """Trace complete attack propagation paths from a source IP.
+            try:
+                pattern_data = session.run(
+                    "CALL db.schema.visualization() YIELD nodes, relationships "
+                    "RETURN nodes, relationships"
+                ).data()
+                patterns = pattern_data[0]["relationships"] if pattern_data else []
+            except Exception:
+                patterns = []
 
-    Use for: deep investigation tasks requiring full attack chain reconstruction.
-    ONLY invoke this for investigation queries — not for simple lookups.
-    Expensive operation: traverses up to max_hops relationship levels.
+        lines = ["=== Live Graph Schema (from Neo4j) ===", "", "-- Node Labels & Properties --"]
+        for row in node_rows:
+            props = ", ".join(
+                f"{p['name']}({'|'.join(p['types'])})"
+                for p in row["properties"] if p.get("name")
+            )
+            label = row["nodeType"].strip(":` ")
+            lines.append(f"  {label}:  id(string, unique key)  {props}")
 
-    Returns JSON with all discovered attack paths, hop counts, and node chains.
-    """
-    query = f"""
-    MATCH path = (src:IP {{ip: $ip}})-[:ATTACKED|EXPLOITED|LATERAL_MOVE*1..{max_hops}]->(target)
-    RETURN
-        [n in nodes(path) | n.ip] as ip_chain,
-        length(path) as hops,
-        [r in relationships(path) | type(r)] as rel_types,
-        [r in relationships(path) | r.timestamp] as timestamps
-    ORDER BY hops DESC
-    LIMIT 20
-    """
-    with get_driver().session() as session:
-        result = session.run(query, {"ip": source_ip})
-        paths = [dict(r) for r in result]
-        return json.dumps({
-            "source_ip": source_ip,
-            "max_hops": max_hops,
-            "paths_found": len(paths),
-            "paths": paths
-        })
+        lines += ["", "-- Relationship Types & Properties --"]
+        for row in rel_rows:
+            props = ", ".join(
+                f"{p['name']}({'|'.join(p['types'])})"
+                for p in row["properties"] if p.get("name")
+            )
+            rel = row["relType"].strip(":` ")
+            lines.append(f"  {rel}:  {props}" if props else f"  {rel}")
 
+        if patterns:
+            lines += ["", "-- Relationship Patterns --"]
+            for p in patterns:
+                try:
+                    start = p.get("startNodeLabels", ["?"])[0]
+                    end = p.get("endNodeLabels", ["?"])[0]
+                    rel_type = p.get("relationshipType", "?")
+                    lines.append(f"  ({start})-[:{rel_type}]->({end})")
+                except Exception:
+                    continue
 
-def find_attacker_origin(ip: str) -> str:
-    """Search for an Attacker node connected to this IP via ORIGIN_OF relationship.
+        return "\n".join(lines)
 
-    Use for: confirming whether an attack origin has been found in the graph.
-    Returns attacker details if found, or null if no attacker node linked.
-    """
-    query = """
-    MATCH (a:Attacker)-[:ORIGIN_OF]->(n:IP {ip: $ip})
-    RETURN a.id as attacker_id, a.group as group, a.ttps as ttps
-    LIMIT 1
-    """
-    with get_driver().session() as session:
-        result = session.run(query, {"ip": ip})
-        records = [dict(r) for r in result]
-        if not records:
-            return json.dumps({"found": False, "ip": ip})
-        return json.dumps({"found": True, "attacker": records[0]})
-
-
-def get_node_with_context(ip: str) -> str:
-    """Query an IP node AND automatically fetch all its direct neighbors and relationships.
-
-    Use this instead of get_node_by_ip() when you want graph visualization context.
-    Returns the node's properties plus all 1-hop neighbors and edges,
-    ensuring the graph panel always has meaningful topology to display.
-
-    Returns JSON with: {found, node, neighbors, edges}
-    """
-    query = """
-    MATCH (n:IP {ip: $ip})
-    OPTIONAL MATCH (n)-[r]-(neighbor)
-    RETURN
-        n,
-        collect(DISTINCT {
-            neighbor_ip: neighbor.ip,
-            neighbor_hostname: neighbor.hostname,
-            neighbor_risk_score: neighbor.risk_score,
-            neighbor_type: labels(neighbor)[0],
-            rel_type: type(r),
-            rel_direction: CASE WHEN startNode(r) = n THEN 'out' ELSE 'in' END,
-            timestamp: r.timestamp,
-            method: r.method
-        }) as neighbors
-    LIMIT 1
-    """
-    with get_driver().session() as session:
-        result = session.run(query, {"ip": ip})
-        records = list(result)
-        if not records or records[0]["n"] is None:
-            return json.dumps({"found": False, "ip": ip})
-
-        record = records[0]
-        node_data = dict(record["n"])
-        raw_neighbors = record["neighbors"] or []
-
-        neighbors = [n for n in raw_neighbors if n.get("neighbor_ip")]
-
-        edges = []
-        for nb in neighbors:
-            if nb.get("rel_direction") == "out":
-                edges.append(
-                    {
-                        "source": ip,
-                        "target": nb["neighbor_ip"],
-                        "label": nb.get("rel_type", ""),
-                    }
-                )
-            else:
-                edges.append(
-                    {
-                        "source": nb["neighbor_ip"],
-                        "target": ip,
-                        "label": nb.get("rel_type", ""),
-                    }
-                )
-
-        return json.dumps(
-            {
-                "found": True,
-                "node": node_data,
-                "neighbors": neighbors,
-                "edges": edges,
-            }
-        )
+    except Exception as e:
+        return f"(Schema query failed: {e})"

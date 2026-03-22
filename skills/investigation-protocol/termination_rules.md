@@ -6,8 +6,8 @@
 
 ### STOP-1: 攻击源头已确认
 **触发条件：**
-- 已通过 `find_attacker_origin()` 找到与某 IP 关联的 `Attacker` 节点
-- 或 `ATTR_FIND_ATTACKER_FOR_IP` 查询返回非空结果
+- 已通过 `get_node_by_id()` / `run_cypher_query()` 找到与实体关联的 `Attacker` 或上游 IOC 入口节点
+- 或等价 Cypher 查询返回非空结果
 
 **置信度：** HIGH
 

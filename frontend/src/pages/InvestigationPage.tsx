@@ -66,6 +66,13 @@ export function InvestigationPage() {
           </div>
           <div className="panel-graph">
             <GraphPanel graphData={state.graph} isUpdating={state.status === "running"} />
+            <div className="graph-todos-overlay">
+              <TodosPanel
+                orchestratorTodos={state.orchestrator_todos}
+                agentTodos={state.agent_todos}
+                status={state.status}
+              />
+            </div>
           </div>
         </section>
       </main>

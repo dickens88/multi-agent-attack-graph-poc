@@ -6,7 +6,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
-from tools import get_node_by_ip, run_cypher_query, get_node_neighbors
+from tools import get_node_by_id, run_cypher_query, get_node_neighbors
+from tools.graph_tools import get_live_schema
 from subagents import (
     nl2cypher_agent,
     graph_query_agent,
@@ -15,6 +16,11 @@ from subagents import (
 )
 
 load_dotenv()
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").lower() in ("1", "true", "yes")
+
 
 ORCHESTRATOR_PROMPT = """
 # Role: Attack Graph Investigation Orchestrator
@@ -32,9 +38,9 @@ ORCHESTRATOR_PROMPT = """
 判断标准：查询涉及单一节点的存在性、属性或直接邻居
 
 处置方式：
-→ 直接调用 get_node_by_ip() 或 get_node_neighbors()
-→ 立即返回结果
-→ 不写 todos，不启动子 Agent
+→ 直接调用 get_node_by_id(node_id) — 适用于所有实体类型（主机名、用户名、IP、进程ID等）
+→ 或调用 get_node_neighbors(node_id) 获取邻居
+→ 立即返回结果，不写 todos，不启动子 Agent
 
 ### LEVEL-2：中等查询（使用 1-2 个子 Agent，无需 todos）
 
@@ -89,10 +95,18 @@ def create_orchestrator():
 
     skills_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
 
+    live_schema = get_live_schema()
+    system_prompt = (
+        ORCHESTRATOR_PROMPT
+        + "\n\n---\n\n## Live Graph Schema (Neo4j)\n\n"
+        + live_schema
+    )
+
+    # LangGraph compile(debug=True): graph/step tracing to stderr — not the same as LOG_LEVEL=DEBUG.
     orchestrator_instance = create_deep_agent(
         model=_build_main_model(),
         tools=[
-            get_node_by_ip,
+            get_node_by_id,
             run_cypher_query,
             get_node_neighbors,
         ],
@@ -102,11 +116,12 @@ def create_orchestrator():
             tracer_agent,
             report_agent,
         ],
-        system_prompt=ORCHESTRATOR_PROMPT,
+        system_prompt=system_prompt,
         checkpointer=checkpointer,
         store=store,
         skills=[skills_root],
         name="attack-graph-orchestrator",
+        debug=_env_flag("DEEP_AGENT_DEBUG"),
     )
 
     return orchestrator_instance, checkpointer

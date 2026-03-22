@@ -1,17 +1,21 @@
 import json
-import logging
 from datetime import datetime
 from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+
+from agent_logging import get_investigation_callbacks
+from logging_config import get_logger, setup_logging
+
+setup_logging()
 
 from orchestrator import orchestrator
 
 app = FastAPI()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
-logger = logging.getLogger("sse_server")
-logger.setLevel(logging.INFO)
+logger = get_logger("lab.sse")
 
 
 def _parse_subagent_context(ns: tuple, metadata: dict, fallback_counter: int) -> tuple[bool, str | None, str]:
@@ -261,12 +265,10 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
     3. Merge everything and return.
     """
     graph_tools = {
-        "get_node_by_ip",
+        "get_node_by_id",
         "run_cypher_query",
         "get_node_neighbors",
         "trace_attack_path",
-        "find_attacker_origin",
-        "get_node_with_context",
     }
     if tool_name not in graph_tools:
         return None
@@ -281,25 +283,50 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
     edges: list[dict] = []
     highlight: list[str] = []
 
-    if tool_name == "get_node_by_ip" and data.get("found"):
+    if tool_name == "get_node_by_id" and data.get("found"):
         node_obj = data["node"]
-        node = _build_node(node_obj) if isinstance(node_obj, dict) and "_labels" in node_obj else None
-        if node is None:
-            ip = node_obj.get("ip") or data.get("ip")
-            if ip:
-                labels = node_obj.get("_labels", ["IP"])
-                node_type = labels[0] if labels else "IP"
-                node = {
-                    "id": ip,
-                    "label": node_obj.get("name") or node_obj.get("hostname") or ip,
-                    "type": node_type,
-                    "color": _NODE_COLORS.get(node_type, "#378ADD"),
-                    "icon": _NODE_ICONS.get(node_type, "🔵"),
-                    "properties": {k: v for k, v in node_obj.items() if not k.startswith("_")},
-                }
-        if node:
+        node_type = data.get("node_type", "Unknown")
+        # 用 id 或 ip 作为图节点的唯一标识
+        nid = (node_obj.get("id") or node_obj.get("ip")
+               or node_obj.get("name") or node_obj.get("username"))
+        if nid:
+            node = _build_node(node_obj) if "_labels" in node_obj else {
+                "id": str(nid),
+                "label": (node_obj.get("name") or node_obj.get("username")
+                          or node_obj.get("id") or str(nid)),
+                "type": node_type,
+                "color": _NODE_COLORS.get(node_type, "#90a4ae"),
+                "icon": _NODE_ICONS.get(node_type, "●"),
+                "properties": {k: v for k, v in node_obj.items() if not k.startswith("_")},
+            }
             nodes_map[node["id"]] = node
             highlight = [node["id"]]
+
+            # 同时把 get_node_by_id 返回的 neighbors 直接用于图谱
+            for nb in data.get("neighbors", []):
+                nid2 = nb.get("neighbor_id")
+                ntype2 = nb.get("neighbor_type", "Unknown")
+                nb_props = nb.get("neighbor_props") or {}
+                if nid2:
+                    if nid2 not in nodes_map:
+                        nodes_map[nid2] = {
+                            "id": str(nid2),
+                            "label": (nb_props.get("name") or nb_props.get("username")
+                                      or nb_props.get("id") or str(nid2)),
+                            "type": ntype2,
+                            "color": _NODE_COLORS.get(ntype2, "#90a4ae"),
+                            "icon": _NODE_ICONS.get(ntype2, "●"),
+                            "properties": {k: v for k, v in nb_props.items()
+                                           if not k.startswith("_")},
+                        }
+                    rt = nb.get("rel_type", "")
+                    direction = nb.get("rel_direction", "out")
+                    src_id = str(node["id"]) if direction == "out" else str(nid2)
+                    tgt_id = str(nid2) if direction == "out" else str(node["id"])
+                    key_ = (src_id, tgt_id, rt)
+                    if key_ not in edges_set:
+                        edges_set.add(key_)
+                        edges.append({"source": src_id, "target": tgt_id, "label": rt})
 
     elif tool_name == "run_cypher_query" and data.get("status") == "success":
         nm, el = _scan_rows_for_nodes_and_edges(data.get("rows", []))
@@ -311,70 +338,78 @@ def extract_graph_data(tool_name: str, tool_result: str) -> dict | None:
                 edges.append(e)
 
     elif tool_name == "get_node_neighbors":
-        src_ip = data.get("ip")
-        if src_ip:
-            nodes_map[src_ip] = {
-                "id": src_ip,
-                "label": src_ip,
-                "type": "IP",
-                "color": _NODE_COLORS["IP"],
-                "icon": _NODE_ICONS["IP"],
-                "properties": {},
-            }
-        for nb in data.get("neighbors", []):
-            nip = nb.get("neighbor_ip")
-            if not nip:
-                continue
-            ntype = nb.get("neighbor_type", "IP")
-            nodes_map[nip] = {
-                "id": nip,
-                "label": nb.get("neighbor_hostname") or nb.get("neighbor_name") or nip,
-                "type": ntype,
-                "color": _NODE_COLORS.get(ntype, "#90a4ae"),
-                "icon": _NODE_ICONS.get(ntype, "●"),
-                "properties": {k: v for k, v in nb.items() if not k.startswith("neighbor_")},
-            }
-            if src_ip:
-                key_ = (src_ip, nip, nb.get("rel_type", ""))
+        center = data.get("node_id")
+        for row in data.get("neighbors", []):
+            n_obj = row.get("n")
+            m_obj = row.get("m")
+            rel_type = row.get("rel_type") or ""
+            if isinstance(n_obj, dict) and "_labels" in n_obj:
+                bn = _build_node(n_obj)
+                if bn:
+                    nodes_map[bn["id"]] = bn
+                    if center and (bn["id"] == str(center) or bn["id"] == center):
+                        highlight = [bn["id"]]
+            if isinstance(m_obj, dict) and "_labels" in m_obj:
+                bm = _build_node(m_obj)
+                if bm:
+                    nodes_map[bm["id"]] = bm
+            n_id = None
+            m_id = None
+            if isinstance(n_obj, dict) and "_labels" in n_obj:
+                nn = _build_node(n_obj)
+                if nn:
+                    n_id = nn["id"]
+            if isinstance(m_obj, dict) and "_labels" in m_obj:
+                mm = _build_node(m_obj)
+                if mm:
+                    m_id = mm["id"]
+            if n_id and m_id:
+                key_ = (n_id, m_id, rel_type)
                 if key_ not in edges_set:
                     edges_set.add(key_)
-                    edges.append({"source": src_ip, "target": nip, "label": nb.get("rel_type", "")})
+                    edges.append({"source": n_id, "target": m_id, "label": rel_type})
 
     elif tool_name == "trace_attack_path":
-        seen: set[str] = set()
         for path in data.get("paths", []):
-            chain = path.get("ip_chain", [])
-            rel_types = path.get("rel_types", [])
-            for i, ip in enumerate(chain):
-                if ip and ip not in seen:
-                    nodes_map[ip] = {
-                        "id": ip,
-                        "label": ip,
-                        "type": "IP",
-                        "color": _NODE_COLORS["IP"],
-                        "icon": _NODE_ICONS["IP"],
-                        "properties": {},
-                    }
-                    seen.add(ip)
-                if i > 0 and chain[i - 1] and ip:
-                    rt = rel_types[i - 1] if i - 1 < len(rel_types) else "ATTACKED"
-                    key_ = (chain[i - 1], ip, rt)
-                    if key_ not in edges_set:
-                        edges_set.add(key_)
-                        edges.append({"source": chain[i - 1], "target": ip, "label": rt})
-
-    elif tool_name == "find_attacker_origin" and data.get("found"):
-        attacker = data["attacker"]
-        aid = f"attacker:{attacker.get('attacker_id')}"
-        nodes_map[aid] = {
-            "id": aid,
-            "label": attacker.get("group") or attacker.get("attacker_id"),
-            "type": "Attacker",
-            "color": _NODE_COLORS["Attacker"],
-            "icon": _NODE_ICONS["Attacker"],
-            "properties": {k: v for k, v in attacker.items()},
-        }
-        highlight = [aid]
+            path_nodes = path.get("path_nodes") or []
+            path_rels = path.get("path_rels") or []
+            chain_ids: list[str] = []
+            for pn in path_nodes:
+                if not isinstance(pn, dict):
+                    continue
+                props = pn.get("props")
+                node = None
+                if isinstance(props, dict) and "_labels" in props:
+                    node = _build_node(props)
+                if node:
+                    nodes_map[node["id"]] = node
+                    chain_ids.append(node["id"])
+                else:
+                    pid = pn.get("id")
+                    if pid:
+                        ptype = pn.get("type", "Unknown")
+                        plabel = _pick_node_label(props) if isinstance(props, dict) else str(pid)
+                        nodes_map[str(pid)] = {
+                            "id": str(pid),
+                            "label": plabel,
+                            "type": ptype,
+                            "color": _NODE_COLORS.get(ptype, "#90a4ae"),
+                            "icon": _NODE_ICONS.get(ptype, "●"),
+                            "properties": (
+                                {k: v for k, v in props.items() if not k.startswith("_")}
+                                if isinstance(props, dict) else {}
+                            ),
+                        }
+                        chain_ids.append(str(pid))
+            for i in range(len(chain_ids) - 1):
+                rt = "RELATED"
+                if i < len(path_rels) and isinstance(path_rels[i], dict):
+                    rt = path_rels[i].get("type") or rt
+                a, b = chain_ids[i], chain_ids[i + 1]
+                key_ = (a, b, rt)
+                if key_ not in edges_set:
+                    edges_set.add(key_)
+                    edges.append({"source": a, "target": b, "label": rt})
 
     if nodes_map:
         sub_nodes, sub_edges = _fetch_subgraph_for_ids(list(nodes_map.keys()))
@@ -481,7 +516,9 @@ def _persist_tracer_findings(result_str: str) -> tuple[str, str | None]:
         return result_str, None
 
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    source_ip = str(payload.get("source_ip") or "unknown").replace("/", "_")
+    source_ip = str(
+        payload.get("source_entity") or payload.get("source_ip") or "unknown"
+    ).replace("/", "_")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_name = f"trace_{source_ip}_{ts}.json"
     file_path = ARTIFACTS_DIR / file_name
@@ -503,11 +540,23 @@ def _persist_report_markdown(result_str: str) -> tuple[str, str | None]:
 
 
 async def stream_investigation(user_query: str, thread_id: str):
-    config = {"configurable": {"thread_id": thread_id}}
+    logger.info(
+        "investigation_start thread_id=%s query_len=%s query_preview=%s",
+        thread_id,
+        len(user_query),
+        (user_query[:200] + "…") if len(user_query) > 200 else user_query,
+    )
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "callbacks": get_investigation_callbacks(),
+    }
 
     active_subagents: dict[str, str] = {}
     pending_tool_calls: dict[str, dict] = {}
+    logged_tool_chunk_ids: set[str] = set()
     synthetic_counter = 0
+    # Per-call_id reasoning accumulator: captures AI text between tool calls
+    reasoning_buf: dict[str, str] = {}
 
     async for chunk in orchestrator.astream(
         {"messages": [{"role": "user", "content": user_query}]},
@@ -528,6 +577,11 @@ async def stream_investigation(user_query: str, thread_id: str):
         if is_subagent and call_id and call_id not in active_subagents:
             agent_name = metadata.get("lc_agent_name") or getattr(token, "name", None) or inferred_agent_name
             active_subagents[call_id] = agent_name
+            logger.info(
+                "subagent_start call_id=%s agent_name=%s",
+                call_id,
+                agent_name,
+            )
             yield _sse(
                 "subagent_start",
                 {
@@ -541,11 +595,22 @@ async def stream_investigation(user_query: str, thread_id: str):
         if hasattr(token, "tool_call_chunks") and token.tool_call_chunks:
             for tc in token.tool_call_chunks:
                 tc_id = tc.get("id") or tc.get("index", "")
+                tc_key = str(tc_id)
                 name = tc.get("name", "")
                 args_chunk = tc.get("args", "")
 
                 if name:
                     pending_tool_calls[tc_id] = {"name": name, "args_buf": ""}
+                    if tc_key not in logged_tool_chunk_ids:
+                        logged_tool_chunk_ids.add(tc_key)
+                        scope = "subagent" if is_subagent else "orchestrator"
+                        logger.debug(
+                            "tool_call_begin scope=%s tool=%s call_id=%s tc_id=%s",
+                            scope,
+                            name,
+                            call_id,
+                            tc_id,
+                        )
 
                 if args_chunk and tc_id in pending_tool_calls:
                     pending_tool_calls[tc_id]["args_buf"] += args_chunk
@@ -567,18 +632,48 @@ async def stream_investigation(user_query: str, thread_id: str):
                     }
                     if is_subagent:
                         payload["call_id"] = call_id
+                        # Attach accumulated reasoning text to the tool call
+                        buf_key = call_id or "orchestrator"
+                        if buf_key in reasoning_buf and reasoning_buf[buf_key].strip():
+                            payload["reasoning"] = reasoning_buf[buf_key].strip()
+                            reasoning_buf[buf_key] = ""
+                    else:
+                        buf_key = "orchestrator"
+                        if buf_key in reasoning_buf and reasoning_buf[buf_key].strip():
+                            payload["reasoning"] = reasoning_buf[buf_key].strip()
+                            reasoning_buf[buf_key] = ""
                     yield _sse(event_type, payload)
 
         elif token.type == "tool":
             tool_name = token.name or ""
+            # Fallback: resolve tool name from pending_tool_calls when
+            # the ToolMessage lacks a `name` attribute (e.g. write_todos
+            # returns a Command with a manually-created ToolMessage).
+            if not tool_name:
+                tc_id = getattr(token, "tool_call_id", None)
+                if tc_id and tc_id in pending_tool_calls:
+                    tool_name = pending_tool_calls[tc_id].get("name", "")
             result_str = str(token.content)
             graph_data = extract_graph_data(tool_name, result_str)
+            scope = "subagent" if is_subagent else "orchestrator"
+            logger.info(
+                "tool_result scope=%s tool=%s result_len=%s has_graph=%s call_id=%s",
+                scope,
+                tool_name,
+                len(result_str),
+                graph_data is not None,
+                call_id,
+            )
+            logger.debug(
+                "tool_result preview=%s",
+                result_str[:500],
+            )
 
             event_type = "subagent_tool_result" if is_subagent else "orchestrator_tool_result"
             payload = {
                 "type": event_type,
                 "tool": tool_name,
-                "result": result_str[:500],
+                "result": result_str,
                 "graph_data": graph_data,
             }
             if is_subagent:
@@ -624,6 +719,11 @@ async def stream_investigation(user_query: str, thread_id: str):
                         )
 
         if token.type == "ai" and token.content:
+            # Accumulate reasoning text for association with next tool call
+            buf_key = (call_id if is_subagent and call_id else "orchestrator")
+            reasoning_buf.setdefault(buf_key, "")
+            reasoning_buf[buf_key] += str(token.content)
+
             event_type = "subagent_token" if is_subagent else "orchestrator_token"
             payload = {"type": event_type, "content": token.content}
             if is_subagent:
@@ -642,6 +742,12 @@ async def stream_investigation(user_query: str, thread_id: str):
                 elif agent_name == "report-agent":
                     final_result, persisted_file = _persist_report_markdown(final_result)
 
+                logger.info(
+                    "subagent_complete call_id=%s agent_name=%s persisted_file=%s",
+                    finished_call_id,
+                    agent_name,
+                    persisted_file,
+                )
                 yield _sse(
                     "subagent_complete",
                     {
@@ -656,9 +762,14 @@ async def stream_investigation(user_query: str, thread_id: str):
 
                 # 生成调查报告后立即结束流程，跳过后续图谱维护阶段
                 if agent_name == "report-agent":
+                    logger.info(
+                        "investigation_done_early reason=report-agent_finished thread_id=%s",
+                        thread_id,
+                    )
                     yield _sse("done", {"type": "done"})
                     return
 
+    logger.info("investigation_stream_complete thread_id=%s", thread_id)
     yield _sse("done", {"type": "done"})
 
 

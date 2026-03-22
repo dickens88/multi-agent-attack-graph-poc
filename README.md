@@ -56,7 +56,7 @@ lab/
 ### 编排与数据流（简述）
 
 1. 用户问题进入 **Orchestrator**（`orchestrator.py`），按系统提示中的 **LEVEL-1 / 2 / 3** 选择路径。
-2. **LEVEL-1**：直接调用 `get_node_by_ip`、`get_node_neighbors` 等工具，不委派子 Agent。
+2. **LEVEL-1**：直接调用 `get_node_by_id`、`get_node_neighbors` 等工具，不委派子 Agent。
 3. **LEVEL-2**：委派 **nl2cypher-agent** 与 **graph-query-agent** 完成查询与结果整理。
 4. **LEVEL-3**：`write_todos` 规划 → **tracer-agent** 迭代溯源 → 按需 **graph-query-agent** → 默认 **report-agent** 产出结论文本。
 5. HTTP 场景下，`api/sse_server.py` 将 LangGraph / Deep Agents 流中的事件转换为 SSE，前端 `useInvestigationStream` 解析后更新时间线、待办与图谱。

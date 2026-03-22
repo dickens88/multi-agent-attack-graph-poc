@@ -32,12 +32,9 @@ function JsonScalar({ value }: { value: string | number | boolean | null }) {
   if (typeof value === "number") {
     return <span className="json-number">{String(value)}</span>;
   }
-  const s = value;
-  const truncated = s.length > 200;
-  const shown = truncated ? `${s.slice(0, 200)}…` : s;
   return (
-    <span className="json-string" title={truncated ? s : undefined}>
-      "{shown}"
+    <span className="json-string">
+      "{value}"
     </span>
   );
 }
@@ -62,13 +59,10 @@ function JsonBlock({ data }: { data: Record<string, unknown> }) {
 
 function JsonArray({ data }: { data: unknown[] }) {
   if (data.length === 0) return <span className="json-null">[]</span>;
-  
-  const slice = data.slice(0, 10);
-  const rest = data.length - slice.length;
 
   return (
     <div className="json-block">
-      {slice.map((item, i) => (
+      {data.map((item, i) => (
         <div key={i} className="json-row">
           <div className="json-key" style={{ color: "var(--text-muted)" }}>{i}</div>
           <div>
@@ -76,7 +70,6 @@ function JsonArray({ data }: { data: unknown[] }) {
           </div>
         </div>
       ))}
-      {rest > 0 && <div className="json-row json-null">... {rest} more items</div>}
     </div>
   );
 }
@@ -207,8 +200,8 @@ function SubagentThinking({ agentName, content }: { agentName: string; content: 
 }
 
 const TOOL_ICONS: Record<string, string> = {
-  get_node_by_ip: "⚡", get_node_with_context: "⚡", run_cypher_query: "📊", get_node_neighbors: "🕸️",
-  trace_attack_path: "🗺️", find_attacker_origin: "🎯", nlp_to_cypher: "💬", evaluate_termination: "🛑",
+  get_node_by_id: "⚡", run_cypher_query: "📊", get_node_neighbors: "🕸️",
+  trace_attack_path: "🗺️", get_live_schema: "📐", nlp_to_cypher: "💬", evaluate_termination: "🛑",
   write_todos: "📋", task: "📤",
 };
 

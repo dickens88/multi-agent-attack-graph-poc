@@ -544,8 +544,36 @@ body {
 /* ========================================================================= */
 /* TODOS PANEL */
 /* ========================================================================= */
+.graph-todos-overlay {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 320px;
+  max-height: calc(100% - 80px); /* Leave room for the legend at the bottom */
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+}
+
+.graph-todos-overlay .todos-panel {
+  background: rgba(11, 15, 25, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.graph-todos-overlay .panel-title-bar {
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--panel-border);
+}
+
 .todos-section {
-  background: var(--panel-bg);
+  background: rgba(15, 23, 42, 0.55);
   border: 1px solid var(--panel-border);
   border-radius: 12px;
   padding: 14px;
@@ -627,17 +655,22 @@ body {
 .graph-legend {
   position: absolute;
   bottom: 16px;
-  right: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   background: rgba(15, 23, 42, 0.7);
   backdrop-filter: blur(8px);
   border: 1px solid var(--panel-border);
   border-radius: 8px;
-  padding: 12px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px 16px;
+  padding: 10px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 12px 20px;
   z-index: 10;
   box-shadow: var(--shadow-md);
+  width: max-content;
+  max-width: 90%;
 }
 
 .graph-legend-item {

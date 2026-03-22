@@ -5,7 +5,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
+from agent_logging import truncate_text
+from logging_config import get_logger
+
 load_dotenv()
+
+log = get_logger("lab.tools.analysis")
 
 
 def nlp_to_cypher(natural_language_query: str, schema_hint: str = "") -> str:
@@ -57,7 +62,11 @@ Rules:
 
 Question: {natural_language_query}"""
 
-    return llm.invoke(prompt).content.strip()
+    log.info("nlp_to_cypher model=%s", model_name)
+    log.debug("nlp_to_cypher question=%s", truncate_text(natural_language_query, 600))
+    out = llm.invoke(prompt).content.strip()
+    log.debug("nlp_to_cypher cypher=%s", truncate_text(out, 800))
+    return out
 
 
 def evaluate_termination(
@@ -103,13 +112,15 @@ def write_text_file(path: str, content: str) -> str:
             file_path = Path.cwd() / file_path
 
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        nbytes = len(content.encode("utf-8"))
         file_path.write_text(content, encoding="utf-8")
+        log.info("write_text_file path=%s bytes=%s", file_path.resolve(), nbytes)
 
         return json.dumps(
             {
                 "status": "success",
                 "path": str(file_path.resolve()),
-                "bytes": len(content.encode("utf-8")),
+                "bytes": nbytes,
             },
             ensure_ascii=False,
         )
@@ -133,6 +144,11 @@ def read_text_file(path: str) -> str:
             return json.dumps({"status": "error", "error": "file_not_found", "path": str(file_path)}, ensure_ascii=False)
 
         content = file_path.read_text(encoding="utf-8")
+        log.info(
+            "read_text_file path=%s chars=%s",
+            file_path.resolve(),
+            len(content),
+        )
         return json.dumps(
             {
                 "status": "success",

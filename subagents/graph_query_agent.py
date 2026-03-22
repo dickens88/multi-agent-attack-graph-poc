@@ -1,4 +1,4 @@
-from tools import run_cypher_query, get_node_by_ip, get_node_neighbors
+from tools import run_cypher_query, get_node_by_id, get_node_neighbors
 
 GRAPH_QUERY_SYSTEM_PROMPT = """
 # Role: Graph Query Executor
@@ -51,6 +51,6 @@ graph_query_agent = {
         "Do NOT use for multi-hop path tracing (use tracer-agent instead)."
     ),
     "system_prompt": GRAPH_QUERY_SYSTEM_PROMPT,
-    "tools": [run_cypher_query, get_node_by_ip, get_node_neighbors],
+    "tools": [run_cypher_query, get_node_by_id, get_node_neighbors],
     "skills": ["skills"],
 }
