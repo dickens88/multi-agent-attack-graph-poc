@@ -18,11 +18,11 @@ function TodoList({ todos }: { todos: Todo[] }) {
         const isDone = todo.status === "completed";
         const progress = todo.status === "in_progress";
         const iconColor = isDone ? "var(--success)" : (progress ? "var(--accent-cyan)" : "var(--text-muted)");
-        const iconStr = isDone ? "✓" : (progress ? "▶" : "○");
+        const iconStr = isDone ? "✓" : (progress ? <div className="spinner-icon" /> : "○");
 
         return (
           <li key={String(todo.id)} className="todo-item" style={{ opacity: isDone ? 0.6 : 1 }}>
-            <span className="todo-icon" style={{ color: iconColor }}>{iconStr}</span>
+            <span className="todo-icon" style={{ color: iconColor, display: "flex", alignItems: "center" }}>{iconStr}</span>
             <span className="todo-text" style={{ textDecoration: isDone ? "line-through" : "none", color: isDone ? "var(--text-muted)" : "var(--text-main)" }}>
               {todo.text}
             </span>

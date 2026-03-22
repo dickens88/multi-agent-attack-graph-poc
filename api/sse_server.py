@@ -1,6 +1,4 @@
 import json
-from datetime import datetime
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -13,8 +11,6 @@ setup_logging()
 from orchestrator import orchestrator
 
 app = FastAPI()
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 logger = get_logger("lab.sse")
 
 
@@ -356,31 +352,6 @@ def _sse(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _extract_json_payload(raw_text: str) -> dict | None:
-    text = raw_text.strip()
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-    except Exception:
-        pass
-
-    # Try extracting from markdown fenced block.
-    if "```" in text:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                parsed = json.loads(text[start : end + 1])
-                if isinstance(parsed, dict):
-                    return parsed
-            except Exception:
-                return None
-    return None
-
-
 def _extract_todos_payload(raw: str):
     """Best-effort parser for write_todos tool output.
 
@@ -430,35 +401,6 @@ def _extract_todos_payload(raw: str):
     return None
 
 
-def _persist_tracer_findings(result_str: str) -> tuple[str, str | None]:
-    payload = _extract_json_payload(result_str)
-    if not payload:
-        return result_str, None
-
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    source_ip = str(
-        payload.get("source_entity") or payload.get("source_ip") or "unknown"
-    ).replace("/", "_")
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_name = f"trace_{source_ip}_{ts}.json"
-    file_path = ARTIFACTS_DIR / file_name
-    payload["findings_file"] = f"/artifacts/{file_name}"
-    file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return json.dumps(payload, ensure_ascii=False, indent=2), str(file_path)
-
-
-def _persist_report_markdown(result_str: str) -> tuple[str, str | None]:
-    text = result_str.strip()
-    if not text:
-        return result_str, None
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_path = ARTIFACTS_DIR / f"{ts}_investigation_report.md"
-    file_path.write_text(text, encoding="utf-8")
-    decorated = f"{text}\n\n\n---\nreport_file: artifacts/{file_path.name}"
-    return decorated, str(file_path)
-
-
 async def stream_investigation(user_query: str, thread_id: str):
     logger.info(
         "investigation_start thread_id=%s query_len=%s query_preview=%s",
@@ -495,10 +437,23 @@ async def stream_investigation(user_query: str, thread_id: str):
         if is_subagent and call_id and call_id not in active_subagents:
             agent_name = metadata.get("lc_agent_name") or getattr(token, "name", None) or inferred_agent_name
             active_subagents[call_id] = agent_name
+
+            # 从 pending_tool_calls 里取 task() 的 description
+            task_description = ""
+            if call_id in pending_tool_calls:
+                raw = pending_tool_calls[call_id].get("args_buf", "")
+                if raw:
+                    try:
+                        task_args = json.loads(raw)
+                        task_description = task_args.get("description", "")
+                    except Exception:
+                        pass
+
             logger.info(
-                "subagent_start call_id=%s agent_name=%s",
+                "subagent_start call_id=%s agent_name=%s description_len=%s",
                 call_id,
                 agent_name,
+                len(task_description),
             )
             yield _sse(
                 "subagent_start",
@@ -506,7 +461,7 @@ async def stream_investigation(user_query: str, thread_id: str):
                     "type": "subagent_start",
                     "agent_name": agent_name,
                     "call_id": call_id,
-                    "task_description": "",
+                    "task_description": task_description,
                 },
             )
 
@@ -638,22 +593,17 @@ async def stream_investigation(user_query: str, thread_id: str):
                 payload["agent_name"] = active_subagents.get(call_id, inferred_agent_name)
             yield _sse(event_type, payload)
 
-        if not is_subagent and token.type == "tool":
+        if token.type == "tool":
             finished_call_id = getattr(token, "tool_call_id", None)
             if finished_call_id and finished_call_id in active_subagents:
                 agent_name = active_subagents[finished_call_id]
-                final_result = str(token.content)[:4000]
-                persisted_file: str | None = None
-                if agent_name == "tracer-agent":
-                    final_result, persisted_file = _persist_tracer_findings(final_result)
-                elif agent_name == "report-agent":
-                    final_result, persisted_file = _persist_report_markdown(final_result)
+                final_result = str(token.content)
 
                 logger.info(
-                    "subagent_complete call_id=%s agent_name=%s persisted_file=%s",
+                    "subagent_complete call_id=%s agent_name=%s result_len=%s",
                     finished_call_id,
                     agent_name,
-                    persisted_file,
+                    len(final_result),
                 )
                 yield _sse(
                     "subagent_complete",
@@ -662,12 +612,11 @@ async def stream_investigation(user_query: str, thread_id: str):
                         "call_id": finished_call_id,
                         "agent_name": agent_name,
                         "result": final_result,
-                        "persisted_file": persisted_file,
                     },
                 )
                 del active_subagents[finished_call_id]
 
-                # 生成调查报告后立即结束流程，跳过后续图谱维护阶段
+                # report-agent 完成后立即结束流程，跳过后续阶段
                 if agent_name == "report-agent":
                     logger.info(
                         "investigation_done_early reason=report-agent_finished thread_id=%s",

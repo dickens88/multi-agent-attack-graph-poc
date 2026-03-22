@@ -58,16 +58,19 @@ ORCHESTRATOR_PROMPT = """
 处置方式：
 1. 调用 write_todos() 列出调查计划
 2. 委派 tracer-agent 进行迭代溯源
+   - tracer-agent 会把调查发现写入 /findings/{entity}_findings.json
+   - 返回结果包含 findings_file 路径和 executive_summary
 3. 委派 graph-query-agent 补充上下文查询（如需要）
-4. 默认委派 report-agent 生成最终调查结论（即使用户未显式要求）
-5. 汇总所有发现返回
+4. 委派 report-agent 生成最终报告：
+   - task 描述中必须包含 tracer-agent 返回的 findings_file 路径
+   - 例如："根据 /findings/DC01_findings.json 生成调查报告"
+5. 将 report-agent 返回的 Markdown 直接作为最终回复
 
 ## 约束（不得违反）
 
 - 不对简单查询触发 write_todos 或子 Agent
 - 不自行执行多跳 Cypher 查询（委派给专用 Agent）
-- LEVEL-3 调查结束后必须委派 report-agent 产出最终结论
-- 不自行编写完整报告内容（委派给 report-agent）
+- LEVEL-3 调查结束后必须委派 report-agent 产出最终报告
 
 ## 工具调用推理要求
 

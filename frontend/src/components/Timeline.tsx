@@ -1,4 +1,6 @@
 import { useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { TimelineEntry, GraphData } from "../types/stream-events";
 import { AGENT_DISPLAY_NAMES, AGENT_COLORS } from "../hooks/useInvestigationStream";
 
@@ -281,44 +283,104 @@ function ToolRow({ tool, args, reasoning, result, graphData, status, isOrchestra
 }
 
 function SubagentResult({ agentName, result }: { agentName: string; result: string }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);   // 报告默认展开
   const color = AGENT_COLORS[agentName] ?? "#00E5FF";
   const displayName = AGENT_DISPLAY_NAMES[agentName] ?? agentName;
-  const preview = result.replace(/\s+/g, " ").trim().slice(0, 100);
+
+  // report-agent 返回裸 Markdown；其他 agent 返回 JSON
+  const isMarkdown = agentName === "report-agent";
+
+  // 非 Markdown 时解析 JSON，提取 executive_summary 做摘要
+  let jsonData: Record<string, unknown> | null = null;
+  let execSummary: string | null = null;
+  if (!isMarkdown) {
+    try {
+      const parsed = JSON.parse(result.trim());
+      if (parsed && typeof parsed === "object") {
+        jsonData = parsed as Record<string, unknown>;
+        if (typeof parsed.executive_summary === "string") {
+          execSummary = parsed.executive_summary;
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  const preview = result.replace(/\s+/g, " ").trim().slice(0, 120);
 
   return (
     <div className="timeline-row">
-      <div className="timeline-dot" style={{ borderColor: color, boxShadow: `0 0 10px ${color}60` }} />
+      <div
+        className="timeline-dot"
+        style={{ borderColor: color, boxShadow: `0 0 10px ${color}60` }}
+      />
       <div className="agent-card" style={{ borderTopWidth: 2, borderTopColor: color }}>
-        <div className="card-header" style={{ marginBottom: 4, cursor: 'pointer' }} onClick={() => setOpen(!open)}>
+
+        {/* 卡片头 */}
+        <div
+          className="card-header"
+          style={{ marginBottom: 4, cursor: "pointer" }}
+          onClick={() => setOpen((v) => !v)}
+        >
           <div className="card-title-wrap">
-            <span className="agent-badge" style={{ color, borderColor: `${color}40`, background: `${color}10` }}>{displayName}</span>
-            <span className="card-meta">Final Yield</span>
+            <span
+              className="agent-badge"
+              style={{ color, borderColor: `${color}40`, background: `${color}10` }}
+            >
+              {displayName}
+            </span>
+            <span className="card-meta">
+              {isMarkdown ? "Investigation Report" : "Final Yield"}
+            </span>
           </div>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{open ? "▲" : "▼"}</span>
+          <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+            {open ? "▲" : "▼"}
+          </span>
         </div>
-        <div className="card-content" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          {open ? (
-            <div style={{ marginTop: 8 }}>
-              {(() => {
-                const text = result.trim();
-                let parsed = null;
-                try {
-                  parsed = JSON.parse(text);
-                } catch {
-                  // ignore
-                }
-                return parsed && typeof parsed === "object" ? (
-                  <InspectorJsonView data={parsed} />
-                ) : (
-                  <pre className="json-raw-pre">{formatRawJsonText(result)}</pre>
-                );
-              })()}
-            </div>
-          ) : (
-            <span>{preview}{result.length > 100 ? "..." : ""}</span>
-          )}
-        </div>
+
+        {/* tracer-agent：executive_summary 常驻展示 */}
+        {!isMarkdown && execSummary && (
+          <div
+            style={{
+              margin: "4px 0 8px",
+              padding: "8px 12px",
+              background: `${color}12`,
+              borderLeft: `3px solid ${color}`,
+              borderRadius: "0 6px 6px 0",
+              fontSize: 13,
+              color: "var(--text-secondary)",
+              lineHeight: 1.6,
+            }}
+          >
+            {execSummary}
+          </div>
+        )}
+
+        {/* 展开内容 */}
+        {open && (
+          <div className="card-content" style={{ fontSize: 12 }}>
+            {isMarkdown ? (
+              /* report-agent：渲染 Markdown */
+              <div className="report-markdown">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {result}
+                </ReactMarkdown>
+              </div>
+            ) : jsonData ? (
+              /* 其他 agent：JSON inspector */
+              <InspectorJsonView data={jsonData} />
+            ) : (
+              /* 兜底：纯文本 */
+              <pre className="json-raw-pre">{preview}{result.length > 120 ? "..." : ""}</pre>
+            )}
+          </div>
+        )}
+
+        {/* 折叠时的预览（非 report-agent 且无 execSummary） */}
+        {!open && !execSummary && !isMarkdown && (
+          <div className="card-content" style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {preview}{result.length > 120 ? "..." : ""}
+          </div>
+        )}
       </div>
     </div>
   );
