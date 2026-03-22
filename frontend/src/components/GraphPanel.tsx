@@ -23,19 +23,20 @@ type SimLink = d3.SimulationLinkDatum<SimNode> & {
   label: string;
 };
 
+// Cyber-Forensic Tech Palette for Nodes
 const NODE_STYLES: Record<string, { bg: string; border: string }> = {
-  Host: { bg: "#00e5ff22", border: "#00e5ff" },
-  User: { bg: "#b388ff22", border: "#b388ff" },
-  IOC: { bg: "#ff174422", border: "#ff1744" },
-  Alert: { bg: "#ffab0022", border: "#ffab00" },
-  Process: { bg: "#39ff1422", border: "#39ff14" },
-  Network_Connection: { bg: "#448aff22", border: "#448aff" },
-  File: { bg: "#78909c22", border: "#78909c" },
-  Email: { bg: "#ff6e4022", border: "#ff6e40" },
-  MITRE_Technique: { bg: "#ea80fc22", border: "#ea80fc" },
-  Vulnerability: { bg: "#ffd74022", border: "#ffd740" },
-  IP: { bg: "#378ADD22", border: "#378ADD" },
-  Attacker: { bg: "#E24B4A22", border: "#E24B4A" },
+  Host: { bg: "#00E5FF11", border: "#00E5FF" }, // Cyan
+  User: { bg: "#8B5CF611", border: "#8B5CF6" }, // Purple
+  IOC: { bg: "#F43F5E11", border: "#F43F5E" }, // Rose
+  Alert: { bg: "#F59E0B11", border: "#F59E0B" }, // Amber
+  Process: { bg: "#10B98111", border: "#10B981" }, // Emerald 
+  Network_Connection: { bg: "#3B82F611", border: "#3B82F6" }, // Blue
+  File: { bg: "#94A3B811", border: "#94A3B8" }, // Slate
+  Email: { bg: "#F9731611", border: "#F97316" }, // Orange
+  MITRE_Technique: { bg: "#D946EF11", border: "#D946EF" }, // Fuchsia
+  Vulnerability: { bg: "#EAB30811", border: "#EAB308" }, // Yellow
+  IP: { bg: "#0EA5E911", border: "#0EA5E9" }, // Sky
+  Attacker: { bg: "#EF444411", border: "#EF4444" }, // Red
 };
 
 export function GraphPanel({ graphData, isUpdating }: Props) {
@@ -59,26 +60,14 @@ export function GraphPanel({ graphData, isUpdating }: Props) {
     });
 
     const linkMap = new Map<string, SimLink>();
-    let skippedMissingNodeEdges = 0;
     graphData.edges.forEach((e) => {
       const s = String(e.source || "");
       const t = String(e.target || "");
-      if (!s || !t || !nodeMap.has(s) || !nodeMap.has(t)) {
-        skippedMissingNodeEdges += 1;
-        return;
-      }
+      if (!s || !t || !nodeMap.has(s) || !nodeMap.has(t)) return;
       const key = `${s}->${t}:${e.label || ""}`;
       if (!linkMap.has(key)) {
         linkMap.set(key, { source: s, target: t, label: e.label || "" });
       }
-    });
-
-    console.debug("[graph_panel_normalize]", {
-      inputNodes: graphData.nodes.length,
-      inputEdges: graphData.edges.length,
-      normalizedNodes: nodeMap.size,
-      normalizedEdges: linkMap.size,
-      skippedMissingNodeEdges,
     });
 
     return { nodes: Array.from(nodeMap.values()), edges: Array.from(linkMap.values()) };
@@ -96,161 +85,145 @@ export function GraphPanel({ graphData, isUpdating }: Props) {
     svg.selectAll("*").remove();
     svg.attr("viewBox", `0 0 ${width} ${height}`);
 
+    // Add Definitions for glows
+    const defs = svg.append("defs");
+    const filter = defs.append("filter").attr("id", "glow").attr("x", "-50%").attr("y", "-50%").attr("width", "200%").attr("height", "200%");
+    filter.append("feGaussianBlur").attr("stdDeviation", "4").attr("result", "coloredBlur");
+    const feMerge = filter.append("feMerge");
+    feMerge.append("feMergeNode").attr("in", "coloredBlur");
+    feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
     if (!nodes.length) return;
 
     const root = svg.append("g");
 
-    const zoom = d3
-      .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.4, 2.5])
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.2, 3])
       .on("zoom", (event) => root.attr("transform", event.transform.toString()));
     svg.call(zoom);
 
-    const links = root
-      .append("g")
+    // Links (thinner, more electric line)
+    const links = root.append("g")
       .selectAll("line")
       .data(edges)
       .join("line")
-      .attr("stroke", "rgba(148,163,184,0.42)")
-      .attr("stroke-width", 1.4);
+      .attr("stroke", "rgba(148, 163, 184, 0.3)")
+      .attr("stroke-width", 1.2);
 
-    const labels = root
-      .append("g")
+    const labels = root.append("g")
       .selectAll("text")
       .data(edges)
       .join("text")
       .text((d) => d.label || "")
       .attr("font-size", 9)
-      .attr("fill", "#94a3b8")
+      .attr("font-family", "'JetBrains Mono', monospace")
+      .attr("fill", "rgba(148, 163, 184, 0.7)")
       .attr("pointer-events", "none");
 
-    const nodeGroup = root
-      .append("g")
+    // Nodes
+    const nodeGroup = root.append("g")
       .selectAll("g")
       .data(nodes)
       .join("g")
-      .style("cursor", "pointer");
+      .style("cursor", "pointer")
+      .style("transition", "transform 0.1s ease");
 
-    nodeGroup
-      .append("circle")
-      .attr("r", (d) => 11 + (d.risk_score ?? 0.25) * 10)
+    nodeGroup.append("circle")
+      .attr("r", (d) => 10 + (d.risk_score ?? 0) * 12)
       .attr("fill", (d) => {
-        if (d.color) {
-          return `${d.color}33`;
-        }
-        return NODE_STYLES[d.type]?.bg ?? "#2d2d2d";
+        if (d.color) return `${d.color}11`;
+        return NODE_STYLES[d.type]?.bg ?? "#1E293B";
       })
-      .attr("stroke", (d) => d.color ?? NODE_STYLES[d.type]?.border ?? "#666")
-      .attr("stroke-width", 2);
+      .attr("stroke", (d) => d.color ?? NODE_STYLES[d.type]?.border ?? "#64748B")
+      .attr("stroke-width", 2)
+      .style("filter", (d) => (d.risk_score && d.risk_score > 0.5) ? "url(#glow)" : "none");
 
-    nodeGroup
-      .append("text")
+    const textNodes = nodeGroup.append("text")
       .text((d) => d.label)
       .attr("font-size", 10)
-      .attr("fill", "#e2e8f0")
+      .attr("font-family", "'Inter', sans-serif")
+      .attr("font-weight", "500")
+      .attr("fill", "#F8FAFC")
       .attr("text-anchor", "middle")
-      .attr("dy", 24)
+      .attr("dy", 26)
       .attr("pointer-events", "none");
+    
+    // Slight shadow to text for readability against grid
+    textNodes.style("text-shadow", "0px 2px 4px rgba(0,0,0,0.8)");
 
     nodeGroup
-      .on("mouseenter", (_, d) => setHovered(d))
-      .on("mouseleave", () => setHovered(null));
-
-    const simulation = d3
-      .forceSimulation(nodes)
-      .force(
-        "link",
-        d3.forceLink<SimNode, SimLink>(edges).id((d) => d.id).distance(110).strength(0.75)
-      )
-      .force("charge", d3.forceManyBody().strength(-350))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide<SimNode>().radius((d) => 16 + (d.risk_score ?? 0.25) * 10));
-
-    const drag = d3
-      .drag<SVGGElement, SimNode>()
-      .on("start", (event, d) => {
-        if (!event.active) simulation.alphaTarget(0.2).restart();
-        d.fx = d.x;
-        d.fy = d.y;
+      .on("mouseenter", (event, d) => {
+        d3.select(event.currentTarget).select("circle").attr("r", 14 + (d.risk_score ?? 0)*12).style("filter", "url(#glow)");
+        setHovered(d);
       })
-      .on("drag", (event, d) => {
-        d.fx = event.x;
-        d.fy = event.y;
-      })
-      .on("end", (event, d) => {
-        if (!event.active) simulation.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
+      .on("mouseleave", (event, d) => {
+        d3.select(event.currentTarget).select("circle").attr("r", 10 + (d.risk_score ?? 0)*12).style("filter", (d: any) => (d.risk_score && d.risk_score > 0.5) ? "url(#glow)" : "none");
+        setHovered(null);
       });
+
+    const simulation = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink<SimNode, SimLink>(edges).id((d) => d.id).distance(120).strength(0.6))
+      .force("charge", d3.forceManyBody().strength(-300))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collision", d3.forceCollide<SimNode>().radius((d) => 24 + (d.risk_score ?? 0)*12));
+
+    const drag = d3.drag<SVGGElement, SimNode>()
+      .on("start", (event, d) => { if (!event.active) simulation.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; })
+      .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on("end", (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; });
 
     nodeGroup.call(drag);
 
     simulation.on("tick", () => {
-      links
-        .attr("x1", (d) => (d.source as SimNode).x ?? 0)
-        .attr("y1", (d) => (d.source as SimNode).y ?? 0)
-        .attr("x2", (d) => (d.target as SimNode).x ?? 0)
-        .attr("y2", (d) => (d.target as SimNode).y ?? 0);
-
-      labels
-        .attr("x", (d) => (((d.source as SimNode).x ?? 0) + ((d.target as SimNode).x ?? 0)) / 2)
+      links.attr("x1", (d) => (d.source as SimNode).x ?? 0).attr("y1", (d) => (d.source as SimNode).y ?? 0)
+        .attr("x2", (d) => (d.target as SimNode).x ?? 0).attr("y2", (d) => (d.target as SimNode).y ?? 0);
+      labels.attr("x", (d) => (((d.source as SimNode).x ?? 0) + ((d.target as SimNode).x ?? 0)) / 2)
         .attr("y", (d) => (((d.source as SimNode).y ?? 0) + ((d.target as SimNode).y ?? 0)) / 2 - 4);
-
       nodeGroup.attr("transform", (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
     });
 
-    return () => {
-      simulation.stop();
-      setHovered(null);
-    };
+    return () => { simulation.stop(); setHovered(null); };
   }, [nodes, edges]);
 
   return (
     <div className="graph-panel-wrap" ref={wrapRef}>
       <div className="graph-overlay-top">
-        <span className="graph-stat">
-          {nodes.length} 节点 · {edges.length} 边
-        </span>
-        {isUpdating && <span className="graph-updating-badge">图谱更新中</span>}
+        <span className="graph-stat">NODES: {nodes.length} | EDGES: {edges.length}</span>
+        {isUpdating && <span className="graph-updating-badge">SYNCING GRAPH...</span>}
       </div>
 
       {hovered && (
         <div className="graph-node-detail">
           <div className="graph-node-detail-title">{hovered.label}</div>
-          <div className="graph-node-detail-type">{hovered.type}</div>
-          <div className="graph-node-detail-row">
-            <span className="graph-node-detail-key">ID</span>
-            <span className="graph-node-detail-val">{hovered.id}</span>
+          <div className="graph-node-detail-type" style={{ color: NODE_STYLES[hovered.type]?.border ?? "inherit" }}>
+            {hovered.type}
           </div>
+          <div className="graph-node-kv"><span className="graph-node-k">ID</span><span className="graph-node-v">{hovered.id}</span></div>
           {hovered.risk_score !== undefined && (
-            <div className="graph-node-detail-row">
-              <span className="graph-node-detail-key">risk_score</span>
-              <span className="graph-node-detail-val">{String(hovered.risk_score)}</span>
-            </div>
+            <div className="graph-node-kv"><span className="graph-node-k">RISK</span><span className="graph-node-v" style={{ color: hovered.risk_score > 0.5 ? 'var(--danger)' : 'var(--text-main)' }}>{String(hovered.risk_score)}</span></div>
           )}
-          {hovered.properties &&
-            Object.entries(hovered.properties)
-              .filter(([k]) => !["id", "ip", "label", "hostname", "risk_score", "type"].includes(k))
-              .slice(0, 5)
-              .map(([k, v]) => (
-                <div key={k} className="graph-node-detail-row">
-                  <span className="graph-node-detail-key">{k}</span>
-                  <span className="graph-node-detail-val">{String(v ?? "")}</span>
-                </div>
-              ))}
+          {hovered.properties && Object.entries(hovered.properties)
+            .filter(([k]) => !["id", "ip", "label", "hostname", "risk_score", "type"].includes(k))
+            .slice(0, 5)
+            .map(([k, v]) => (
+              <div key={k} className="graph-node-kv">
+                <span className="graph-node-k">{k}</span>
+                <span className="graph-node-v">{String(v ?? "")}</span>
+              </div>
+            ))}
         </div>
       )}
 
       <div className="graph-legend">
         {Object.entries(NODE_STYLES).map(([type, style]) => (
           <div key={type} className="graph-legend-item">
-            <span className="graph-legend-dot" style={{ background: style.bg, borderColor: style.border }} />
+            <span className="graph-legend-dot" style={{ background: style.border, boxShadow: `0 0 8px ${style.border}` }} />
             {type}
           </div>
         ))}
       </div>
 
-      {nodes.length === 0 && <div className="graph-empty">暂无图数据，等待工具结果</div>}
+      {nodes.length === 0 && <div className="graph-empty">AWAITING TOPOLOGY DATA...</div>}
       <svg ref={svgRef} className="graph-canvas" />
     </div>
   );

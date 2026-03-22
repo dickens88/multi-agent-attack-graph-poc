@@ -39,9 +39,10 @@ export function InvestigationPage() {
             </button>
           )}
         </div>
+        <div className="topbar-spacer"></div>
       </header>
 
-      <main className="three-col-grid">
+      <main className="two-col-grid">
         <section className="col-timeline">
           <div className="panel-title-bar">
             <span>调查时间线</span>
@@ -66,16 +67,6 @@ export function InvestigationPage() {
           <div className="panel-graph">
             <GraphPanel graphData={state.graph} isUpdating={state.status === "running"} />
           </div>
-        </section>
-
-        <div className="col-graph-spacer" aria-hidden="true" />
-
-        <section className="col-todos">
-          <TodosPanel
-            orchestratorTodos={state.orchestrator_todos}
-            agentTodos={state.agent_todos}
-            status={state.status}
-          />
         </section>
       </main>
     </div>

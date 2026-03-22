@@ -1,8 +1,12 @@
 import os
 import json
+import logging
 from typing import Optional
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
+
+# DBMS 通知（如「某属性键不存在」）由驱动写入 logger `neo4j.notifications`，默认打到 WARNING，易刷屏。
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
 
 def _serialize_value(val):
