@@ -1,4 +1,4 @@
-from llm_factory import build_chat_model
+from common.llm_factory import build_chat_model
 
 REPORT_SYSTEM_PROMPT = """
 # Role: Threat Intelligence Report Writer

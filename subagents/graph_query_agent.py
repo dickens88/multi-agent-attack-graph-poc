@@ -1,4 +1,4 @@
-from llm_factory import build_chat_model
+from common.llm_factory import build_chat_model
 from tools import run_cypher_query, get_node_by_id, get_node_neighbors
 
 GRAPH_QUERY_SYSTEM_PROMPT = """
@@ -39,7 +39,7 @@ GRAPH_QUERY_SYSTEM_PROMPT = """
 
 - 只执行 READ 查询
 - 失败重试次数上限：1 次
-- 禁止执行无条件查询（如 `MATCH (n) RETURN n`、`MATCH (i:IOC) RETURN ...`）
+- 禁止执行无条件查询（如 `MATCH (n) RETURN n`、`MATCH (i:IOC) RETURN ...`），禁止条件查询所有IOC节点
 - 必须优先执行带明确限制条件的查询（按 `id` / `ip` / `value` / 时间范围 / 关系类型等过滤）
 - 若输入查询缺少过滤条件，应先提示补充条件或自动加上最小必要约束后再执行
 

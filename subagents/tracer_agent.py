@@ -2,7 +2,7 @@ import os
 
 from dotenv import load_dotenv
 
-from llm_factory import build_chat_model
+from common.llm_factory import build_chat_model
 from tools import (
     get_node_by_id,
     get_node_neighbors,

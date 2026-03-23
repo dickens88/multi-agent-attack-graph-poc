@@ -20,8 +20,13 @@
 
 ```text
 lab/
-├── orchestrator.py       # 主控 Agent：create_deep_agent，挂载 tools + subagents + skills
-├── main.py               # CLI：单轮/验证套件/交互式调试（无 HTTP）
+├── common/
+│   ├── orchestrator.py   # 主控 Agent：create_deep_agent，挂载 tools + subagents + skills
+│   ├── llm_factory.py    # 构建 ChatOpenAI 模型
+│   └── logging_utils.py  # 最小化日志配置
+├── tests/
+│   ├── main.py           # CLI：单轮/验证套件/交互式调试（无 HTTP）
+│   └── seed_data.py      # 向 Neo4j 导入演示数据
 ├── api/
 │   └── sse_server.py     # FastAPI + SSE 流式调查接口
 ├── subagents/            # 子 Agent 定义（供 orchestrator 委派）
@@ -44,8 +49,6 @@ lab/
 │   │   └── types/stream-events.ts
 │   └── vite.config.ts    # 开发代理 /api → 后端
 ├── artifacts/            # 运行期生成的追踪/报告等（可纳入 .gitignore 策略）
-├── seed_data.py          # 向 Neo4j 导入演示数据
-├── logging_config.py     # 可选统一日志配置
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
@@ -55,7 +58,7 @@ lab/
 
 ### 编排与数据流（简述）
 
-1. 用户问题进入 **Orchestrator**（`orchestrator.py`），按系统提示中的 **LEVEL-1 / 2 / 3** 选择路径。
+1. 用户问题进入 **Orchestrator**（`common/orchestrator.py`），按系统提示中的 **LEVEL-1 / 2 / 3** 选择路径。
 2. **LEVEL-1**：直接调用 `get_node_by_id`、`get_node_neighbors` 等工具，不委派子 Agent。
 3. **LEVEL-2**：委派 **nl2cypher-agent** 与 **graph-query-agent** 完成查询与结果整理。
 4. **LEVEL-3**：`write_todos` 规划 → **tracer-agent** 迭代溯源 → 按需 **graph-query-agent** → 默认 **report-agent** 产出结论文本。
@@ -77,7 +80,7 @@ lab/
 | `OPENAI_MODEL` | 可选，默认 `gpt-4o`。 |
 | `NEO4J_URI` | Neo4j Bolt 地址，如 `bolt://localhost:7687`。 |
 | `NEO4J_USER` / `NEO4J_PASSWORD` | 数据库账号。 |
-| `LOG_LEVEL` | 可选，日志级别（见 `logging_config.py`）。 |
+| `LOG_LEVEL` | 可选，日志级别（见 `common/logging_utils.py`）。 |
 
 > 根目录 `.env.example` 若仍包含其他厂商 Key，请以实际使用的 **OpenAI 兼容端点** 为准在 `.env` 中配置。
 
@@ -119,7 +122,7 @@ npm run dev
 
 ```bash
 source venv/bin/activate
-python main.py
+python tests/main.py
 ```
 
 将运行内置验证用例并进入交互循环。
@@ -137,7 +140,7 @@ docker compose up -d --build
 导入演示数据（Neo4j 为空时）：
 
 ```bash
-docker exec -it security-agent-backend python seed_data.py
+docker exec -it security-agent-backend python tests/seed_data.py
 ```
 
 ---
@@ -163,7 +166,7 @@ docker exec -it security-agent-backend python seed_data.py
 ### 新增或修改子 Agent
 
 - 在 `subagents/` 新增模块并在 `subagents/__init__.py` 中导出。
-- 在 `orchestrator.py` 的 `create_deep_agent(..., subagents=[...])` 中注册，并视需要扩展 `ORCHESTRATOR_PROMPT` 中的委派规则。
+- 在 `common/orchestrator.py` 的 `create_deep_agent(..., subagents=[...])` 中注册，并视需要扩展 `ORCHESTRATOR_PROMPT` 中的委派规则。
 
 ### 扩展工具
 

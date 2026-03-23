@@ -1,11 +1,10 @@
 import uuid
 
-from agent_logging import get_investigation_callbacks
-from logging_config import setup_logging
+from common.logging_utils import setup_logging
 
 setup_logging()
 
-from orchestrator import orchestrator
+from common.orchestrator import orchestrator
 
 
 def run_query(user_input: str, thread_id: str = None, verbose: bool = False) -> str:
@@ -13,7 +12,6 @@ def run_query(user_input: str, thread_id: str = None, verbose: bool = False) -> 
     thread_id = thread_id or str(uuid.uuid4())
     config = {
         "configurable": {"thread_id": thread_id},
-        "callbacks": get_investigation_callbacks(),
     }
 
     result = orchestrator.invoke(

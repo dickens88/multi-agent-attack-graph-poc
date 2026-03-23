@@ -2,9 +2,8 @@ import os
 
 from dotenv import load_dotenv
 
-from agent_logging import truncate_text
-from llm_factory import build_chat_model
-from logging_config import get_logger
+from common.llm_factory import build_chat_model
+from common.logging_utils import get_logger
 
 load_dotenv()
 
@@ -49,10 +48,14 @@ Rules:
 
 Question: {natural_language_query}"""
 
-    log.info("nlp_to_cypher model=%s", model_name)
-    log.debug("nlp_to_cypher question=%s", truncate_text(natural_language_query, 600))
+    log.info(f"tool_start tool=nlp_to_cypher question_len={len(natural_language_query or '')} schema_hint_len={len(schema_hint or '')}")
+
+    import time
+
+    t0 = time.perf_counter()
     out = llm.invoke(prompt).content.strip()
-    log.debug("nlp_to_cypher cypher=%s", truncate_text(out, 800))
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    log.info(f"tool_end tool=nlp_to_cypher status=success elapsed_ms={elapsed_ms:.2f} cypher_len={len(out)}")
     return out
 
 

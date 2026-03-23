@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 
-from llm_factory import build_chat_model
+from common.llm_factory import build_chat_model
 from tools import nlp_to_cypher, run_cypher_query
 
 load_dotenv()

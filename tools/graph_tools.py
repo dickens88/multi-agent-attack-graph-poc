@@ -7,15 +7,55 @@ from typing import Optional
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
-from logging_config import get_logger
-
-from .neo4j_serialize import serialize_neo4j_value
+from common.logging_utils import get_logger
 
 load_dotenv()
 
 log = get_logger("lab.tools.graph")
 
 _driver = None
+
+
+def _neo4j_json_default(obj):
+    """
+    Best-effort conversion for Neo4j driver objects into JSON-serializable
+    plain Python types.
+    """
+    # Node
+    if hasattr(obj, "labels") and hasattr(obj, "items"):
+        return {"_labels": list(obj.labels), **dict(obj.items())}
+
+    # Relationship
+    if hasattr(obj, "type") and hasattr(obj, "items") and not isinstance(obj, dict):
+        d = dict(obj.items())
+        d["_type"] = obj.type
+        try:
+            d["_start"] = (
+                obj.start_node.get("id")
+                or obj.start_node.get("ip")
+                or str(getattr(obj.start_node, "id", ""))
+            )
+            d["_end"] = (
+                obj.end_node.get("id")
+                or obj.end_node.get("ip")
+                or str(getattr(obj.end_node, "id", ""))
+            )
+        except Exception:
+            # Keep partially filled relationship object if start/end lookups fail.
+            pass
+        return d
+
+    # Path
+    if hasattr(obj, "nodes") and hasattr(obj, "relationships"):
+        return {"nodes": list(obj.nodes), "relationships": list(obj.relationships)}
+
+    # Fallback: keep output stable for any unknown object.
+    return str(obj)
+
+
+def _jsonable(val):
+    """Convert a (possibly Neo4j) value into JSON-compatible Python types."""
+    return json.loads(json.dumps(val, default=_neo4j_json_default, ensure_ascii=False))
 
 
 def get_driver():
@@ -30,25 +70,16 @@ def get_driver():
 
 def _run(query: str, params: dict) -> list[dict]:
     """Execute a query and return fully serialized rows."""
-    log.debug(
-        "cypher_execute preview=%s param_keys=%s",
-        query[:500] + ("…" if len(query) > 500 else ""),
-        list(params.keys()),
-    )
     t0 = time.perf_counter()
     with get_driver().session() as session:
         result = session.run(query, params)
-        rows = [
-            {key: serialize_neo4j_value(record[key]) for key in record.keys()}
-            for record in result
-        ]
+        rows = [_jsonable({key: record[key] for key in record.keys()}) for record in result]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    log.info("cypher_done rows=%s elapsed_ms=%.2f", len(rows), elapsed_ms)
+    log.info(f"cypher_done rows={len(rows)} elapsed_ms={elapsed_ms:.2f}")
     return rows
 
 
 # ── Public tools ────────────────────────────────────────────────────────────
-
 def get_node_by_id(node_id: str, reason: str = "", label: str = "") -> str:
     """Look up any graph entity by its id and return its full properties plus
     all directly connected neighbors and relationships.
@@ -73,7 +104,12 @@ def get_node_by_id(node_id: str, reason: str = "", label: str = "") -> str:
 
     Returns JSON: {found, node_type, node, neighbors: [{id, type, label, rel_type, rel_props}]}
     """
+    t0 = time.perf_counter()
+    log.info(f"tool_start tool=get_node_by_id node_id_len={len(node_id or '')} reason_len={len(reason or '')} label={label or ''}")
+
     if not reason.strip():
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info(f"tool_end tool=get_node_by_id status=error elapsed_ms={elapsed_ms:.2f}")
         return json.dumps({"status": "error", "error": "reason_required", "tool": "get_node_by_id"})
 
     label_clause = f":{label}" if label else ""
@@ -97,6 +133,8 @@ def get_node_by_id(node_id: str, reason: str = "", label: str = "") -> str:
     rows = _run(query, {"val": node_id})
 
     if not rows or rows[0].get("n") is None:
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info(f"tool_end tool=get_node_by_id status=not_found elapsed_ms={elapsed_ms:.2f}")
         return json.dumps({"found": False, "node_id": node_id})
 
     row = rows[0]
@@ -110,12 +148,16 @@ def get_node_by_id(node_id: str, reason: str = "", label: str = "") -> str:
         if nb.get("neighbor_id") or nb.get("rel_type")
     ]
 
-    return json.dumps({
+    out = json.dumps({
         "found": True,
         "node_type": node_type,
         "node": node_obj,
         "neighbors": neighbors,
     })
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    log.info(f"tool_end tool=get_node_by_id status=success elapsed_ms={elapsed_ms:.2f} output_len={len(out)} neighbors={len(neighbors)}")
+    return out
 
 
 def get_node_neighbors(node_id: str, reason: str = "", depth: int = 1, limit: int = 50) -> str:
@@ -134,7 +176,12 @@ def get_node_neighbors(node_id: str, reason: str = "", depth: int = 1, limit: in
 
     Returns JSON: {node_id, depth, neighbors: [{n, rel_type, m}]}
     """
+    t0 = time.perf_counter()
+    log.info(f"tool_start tool=get_node_neighbors node_id_len={len(node_id or '')} reason_len={len(reason or '')} depth={depth} limit={limit}")
+
     if not reason.strip():
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info(f"tool_end tool=get_node_neighbors status=error elapsed_ms={elapsed_ms:.2f}")
         return json.dumps({"status": "error", "error": "reason_required", "tool": "get_node_neighbors"})
 
     query = f"""
@@ -146,7 +193,10 @@ def get_node_neighbors(node_id: str, reason: str = "", depth: int = 1, limit: in
     LIMIT {limit}
     """
     rows = _run(query, {"val": node_id})
-    return json.dumps({"node_id": node_id, "depth": depth, "neighbors": rows})
+    out = json.dumps({"node_id": node_id, "depth": depth, "neighbors": rows})
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    log.info(f"tool_end tool=get_node_neighbors status=success elapsed_ms={elapsed_ms:.2f} output_len={len(out)} neighbors={len(rows)}")
+    return out
 
 
 def trace_attack_path(node_id: str, reason: str = "", max_hops: int = 6) -> str:
@@ -165,7 +215,12 @@ def trace_attack_path(node_id: str, reason: str = "", max_hops: int = 6) -> str:
 
     Returns JSON: {node_id, paths_found, paths: [{nodes, relationships, length}]}
     """
+    t0 = time.perf_counter()
+    log.info(f"tool_start tool=trace_attack_path node_id_len={len(node_id or '')} reason_len={len(reason or '')} max_hops={max_hops}")
+
     if not reason.strip():
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info(f"tool_end tool=trace_attack_path status=error elapsed_ms={elapsed_ms:.2f}")
         return json.dumps({"status": "error", "error": "reason_required", "tool": "trace_attack_path"})
 
     query = f"""
@@ -189,12 +244,16 @@ def trace_attack_path(node_id: str, reason: str = "", max_hops: int = 6) -> str:
     LIMIT 20
     """
     rows = _run(query, {"val": node_id})
-    return json.dumps({
+    out = json.dumps({
         "node_id": node_id,
         "max_hops": max_hops,
         "paths_found": len(rows),
         "paths": rows,
     })
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    log.info(f"tool_end tool=trace_attack_path status=success elapsed_ms={elapsed_ms:.2f} output_len={len(out)} paths_found={len(rows)}")
+    return out
 
 
 def run_cypher_query(query: str, reason: str = "", params: Optional[dict] = None) -> str:
@@ -215,15 +274,25 @@ def run_cypher_query(query: str, reason: str = "", params: Optional[dict] = None
 
     Returns JSON: {status, rows, count} or {status, error, query}
     """
+    t0 = time.perf_counter()
+    log.info(f"tool_start tool=run_cypher_query query_len={len(query or '')} reason_len={len(reason or '')} params_keys={len(params or {})}")
+
     if not reason.strip():
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info(f"tool_end tool=run_cypher_query status=error elapsed_ms={elapsed_ms:.2f}")
         return json.dumps({"status": "error", "error": "reason_required", "tool": "run_cypher_query"})
 
     if params is None:
         params = {}
     try:
         rows = _run(query, params)
-        return json.dumps({"status": "success", "rows": rows, "count": len(rows)})
+        out = json.dumps({"status": "success", "rows": rows, "count": len(rows)})
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info(f"tool_end tool=run_cypher_query status=success elapsed_ms={elapsed_ms:.2f} output_len={len(out)} rows={len(rows)}")
+        return out
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        log.info(f"tool_end tool=run_cypher_query status=exception elapsed_ms={elapsed_ms:.2f} error_len={len(str(e))}")
         return json.dumps({"status": "error", "error": str(e), "query": query})
 
 

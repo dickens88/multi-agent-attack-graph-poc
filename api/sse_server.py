@@ -3,12 +3,11 @@ import json
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
-from agent_logging import get_investigation_callbacks
-from logging_config import get_logger, setup_logging
+from common.logging_utils import get_logger, setup_logging
 
 setup_logging()
 
-from orchestrator import orchestrator
+from common.orchestrator import orchestrator
 
 app = FastAPI()
 logger = get_logger("lab.sse")
@@ -402,15 +401,9 @@ def _extract_todos_payload(raw: str):
 
 
 async def stream_investigation(user_query: str, thread_id: str):
-    logger.info(
-        "investigation_start thread_id=%s query_len=%s query_preview=%s",
-        thread_id,
-        len(user_query),
-        (user_query[:200] + "…") if len(user_query) > 200 else user_query,
-    )
+    logger.info(f"investigation_start thread_id={thread_id} query_len={len(user_query)} query_preview={(user_query[:200] + '…') if len(user_query) > 200 else user_query}")
     config = {
         "configurable": {"thread_id": thread_id},
-        "callbacks": get_investigation_callbacks(),
     }
 
     active_subagents: dict[str, str] = {}
@@ -449,12 +442,7 @@ async def stream_investigation(user_query: str, thread_id: str):
                     except Exception:
                         pass
 
-            logger.info(
-                "subagent_start call_id=%s agent_name=%s description_len=%s",
-                call_id,
-                agent_name,
-                len(task_description),
-            )
+            logger.info(f"subagent_start call_id={call_id} agent_name={agent_name} description_len={len(task_description)}")
             yield _sse(
                 "subagent_start",
                 {
@@ -477,13 +465,6 @@ async def stream_investigation(user_query: str, thread_id: str):
                     if tc_key not in logged_tool_chunk_ids:
                         logged_tool_chunk_ids.add(tc_key)
                         scope = "subagent" if is_subagent else "orchestrator"
-                        logger.debug(
-                            "tool_call_begin scope=%s tool=%s call_id=%s tc_id=%s",
-                            scope,
-                            name,
-                            call_id,
-                            tc_id,
-                        )
 
                 if args_chunk and tc_id in pending_tool_calls:
                     pending_tool_calls[tc_id]["args_buf"] += args_chunk
@@ -526,18 +507,7 @@ async def stream_investigation(user_query: str, thread_id: str):
             result_str = str(token.content)
             graph_data = extract_graph_data(tool_name, result_str)
             scope = "subagent" if is_subagent else "orchestrator"
-            logger.info(
-                "tool_result scope=%s tool=%s result_len=%s has_graph=%s call_id=%s",
-                scope,
-                tool_name,
-                len(result_str),
-                graph_data is not None,
-                call_id,
-            )
-            logger.debug(
-                "tool_result preview=%s",
-                result_str[:500],
-            )
+            logger.info(f"tool_result scope={scope} tool={tool_name} result_len={len(result_str)} has_graph={graph_data is not None} call_id={call_id}")
 
             event_type = "subagent_tool_result" if is_subagent else "orchestrator_tool_result"
             payload = {
@@ -559,14 +529,7 @@ async def stream_investigation(user_query: str, thread_id: str):
             yield _sse(event_type, payload)
 
             if graph_data:
-                logger.info(
-                    "[graph_update_emit] source=%s tool=%s call_id=%s nodes=%d edges=%d",
-                    "subagent" if is_subagent else "orchestrator",
-                    tool_name,
-                    call_id,
-                    len(graph_data.get("nodes", [])),
-                    len(graph_data.get("edges", [])),
-                )
+                logger.info(f"[graph_update_emit] source={'subagent' if is_subagent else 'orchestrator'} tool={tool_name} call_id={call_id} nodes={len(graph_data.get('nodes', []))} edges={len(graph_data.get('edges', []))}")
                 yield _sse("graph_update", {"type": "graph_update", **graph_data})
 
             if tool_name == "write_todos" and todos_list:
@@ -599,12 +562,7 @@ async def stream_investigation(user_query: str, thread_id: str):
                 agent_name = active_subagents[finished_call_id]
                 final_result = str(token.content)
 
-                logger.info(
-                    "subagent_complete call_id=%s agent_name=%s result_len=%s",
-                    finished_call_id,
-                    agent_name,
-                    len(final_result),
-                )
+                logger.info(f"subagent_complete call_id={finished_call_id} agent_name={agent_name} result_len={len(final_result)}")
                 yield _sse(
                     "subagent_complete",
                     {
@@ -618,14 +576,11 @@ async def stream_investigation(user_query: str, thread_id: str):
 
                 # report-agent 完成后立即结束流程，跳过后续阶段
                 if agent_name == "report-agent":
-                    logger.info(
-                        "investigation_done_early reason=report-agent_finished thread_id=%s",
-                        thread_id,
-                    )
+                    logger.info(f"investigation_done_early reason=report-agent_finished thread_id={thread_id}")
                     yield _sse("done", {"type": "done"})
                     return
 
-    logger.info("investigation_stream_complete thread_id=%s", thread_id)
+    logger.info(f"investigation_stream_complete thread_id={thread_id}")
     yield _sse("done", {"type": "done"})
 
 

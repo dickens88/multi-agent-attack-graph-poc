@@ -9,7 +9,7 @@ Includes two complete attack scenarios:
 
 Run:
     source venv/bin/activate
-    python seed_data.py
+    python tests/seed_data.py
 """
 
 from neo4j import GraphDatabase

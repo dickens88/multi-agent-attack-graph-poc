@@ -5,7 +5,7 @@ from deepagents import create_deep_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
-from llm_factory import build_chat_model
+from common.llm_factory import build_chat_model
 from tools import get_node_by_id, run_cypher_query, get_node_neighbors
 from tools.graph_tools import get_live_schema
 from subagents import (
@@ -84,7 +84,9 @@ def create_orchestrator():
     checkpointer = MemorySaver()
     store = InMemoryStore()
 
-    skills_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
+    # skills 目录在项目根目录，而本模块位于 common/ 下。
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    skills_root = os.path.join(repo_root, "skills")
 
     live_schema = get_live_schema()
     system_prompt = (
